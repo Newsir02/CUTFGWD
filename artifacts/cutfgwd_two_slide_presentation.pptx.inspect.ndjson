@@ -1,0 +1,98 @@
+{"kind":"deck","id":"pr/x53ya5","name":"Deck"}
+{"kind":"layout","layoutId":"ae1f70ab-d716-4a68-a9f0-efb37a07dd90","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"5812fd60-de8e-45c9-92c8-f9a828ea453c","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/erp74s","slide":1,"title":"METHOD OVERVIEW · THREE-LEVEL DISTILLATION","textShapes":39}
+{"kind":"shape","id":"sh/76tofuxc","slide":1,"name":"ambient-glow-top","bbox":[1000,-30,320,240]}
+{"kind":"shape","id":"sh/8725ozyx","slide":1,"name":"ambient-glow-bottom","bbox":[-50,520,300,240]}
+{"kind":"textbox","id":"sh/98b6hkfi","slide":1,"name":"eyebrow-1","text":"METHOD OVERVIEW · THREE-LEVEL DISTILLATION","textPreview":"METHOD OVERVIEW · THREE-LEVEL DISTILLATION","textChars":42,"textLines":1,"bbox":[60,26,440,24]}
+{"kind":"textbox","id":"sh/u9knqpg3","slide":1,"name":"title-1","text":"CUTFGWD：三层知识驱动的图无关时序蒸馏","textPreview":"CUTFGWD：三层知识驱动的图无关时序蒸馏","textChars":22,"textLines":1,"bbox":[60,55,1150,62]}
+{"kind":"textbox","id":"sh/vutojux8","slide":1,"name":"page-1","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[1170,26,42,24]}
+{"kind":"shape","id":"sh/wv25szyt","slide":1,"name":"header-rule-1","bbox":[60,126,1160,0]}
+{"kind":"textbox","id":"sh/hwb6l4fe","slide":1,"name":"training-only","text":"TRAINING ONLY · 教师 → 学生","textPreview":"TRAINING ONLY · 教师 → 学生","textChars":23,"textLines":1,"bbox":[493,145,294,30]}
+{"kind":"shape","id":"sh/adgne5gj","slide":1,"name":"distill-band-1","bbox":[306,177,668,91]}
+{"kind":"textbox","id":"sh/byp47ax4","slide":1,"name":"distill-label-1","text":"LOGIT · 概率分布","textPreview":"LOGIT · 概率分布","textChars":12,"textLines":1,"bbox":[370,185,505,24]}
+{"kind":"textbox","id":"sh/7axkva5o","slide":1,"name":"distill-formula-1","text":"𝓛KD = T² · KL(pᵀ ∥ pˢ)","textPreview":"𝓛KD = T² · KL(pᵀ ∥ pˢ)","textChars":23,"textLines":1,"bbox":[355,212,540,45]}
+{"kind":"shape","id":"sh/69oj2543","slide":1,"name":"distill-band-2","bbox":[306,292,668,91]}
+{"kind":"textbox","id":"sh/tcf2xkne","slide":1,"name":"distill-label-2","text":"RANK · 候选排序","textPreview":"RANK · 候选排序","textChars":11,"textLines":1,"bbox":[370,300,505,24]}
+{"kind":"textbox","id":"sh/sb614fmt","slide":1,"name":"distill-formula-2","text":"𝓛W1 = ∑ₖ₌₁ᶜ⁻¹ wₖ |CDFᵀₖ − CDFˢₖ|","textPreview":"𝓛W1 = ∑ₖ₌₁ᶜ⁻¹ wₖ |CDFᵀₖ − CDFˢₖ|","textChars":33,"textLines":1,"bbox":[355,327,540,45]}
+{"kind":"shape","id":"sh/jmx0rq5c","slide":1,"name":"distill-band-3","bbox":[306,407,668,91]}
+{"kind":"textbox","id":"sh/il4jy5or","slide":1,"name":"distill-label-3","text":"RELATION · 历史结构","textPreview":"RELATION · 历史结构","textChars":15,"textLines":1,"bbox":[370,415,505,24]}
+{"kind":"textbox","id":"sh/58fit0ni","slide":1,"name":"distill-formula-3","text":"𝓛CUT-FGW = ⟨Π★, CFGW(Π★)⟩ / ‖Π★‖₁","textPreview":"𝓛CUT-FGW = ⟨Π★, CFGW(Π★)⟩ / ‖Π★‖₁","textChars":34,"textLines":1,"bbox":[355,442,540,45]}
+{"kind":"shape","id":"sh/kn610v6x","slide":1,"name":"teacher-panel","bbox":[58,162,282,370]}
+{"kind":"textbox","id":"sh/vid0nq5g","slide":1,"name":"teacher-pill","text":"TGN TEACHER","textPreview":"TGN TEACHER","textChars":11,"textLines":1,"bbox":[78,180,152,32]}
+{"kind":"textbox","id":"sh/ah4julov","slide":1,"name":"teacher-title","text":"TGN 时序教师","textPreview":"TGN 时序教师","textChars":8,"textLines":1,"bbox":[78,220,242,42]}
+{"kind":"textbox","id":"sh/ydkj6l8n","slide":1,"name":"teacher-input","text":"连续事件  (u, v, t, m)","textPreview":"连续事件  (u, v, t, m)","textChars":18,"textLines":1,"bbox":[78,264,242,30]}
+{"kind":"textbox","id":"sh/zetkzqp8","slide":1,"name":"teacher-num-0","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[80,312,34,30]}
+{"kind":"textbox","id":"sh/0fm18vqt","slide":1,"name":"teacher-step-0","text":"TGN Memory","textPreview":"TGN Memory","textChars":10,"textLines":1,"bbox":[118,311,200,32]}
+{"kind":"textbox","id":"sh/lgv2107e","slide":1,"name":"teacher-num-1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[80,365,34,30]}
+{"kind":"textbox","id":"sh/mh43al8j","slide":1,"name":"teacher-step-1","text":"Temporal Neighbor","textPreview":"Temporal Neighbor","textChars":17,"textLines":1,"bbox":[118,364,200,32]}
+{"kind":"textbox","id":"sh/nidk3qp4","slide":1,"name":"teacher-num-2","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[80,418,34,30]}
+{"kind":"textbox","id":"sh/8jmlcvqp","slide":1,"name":"teacher-step-2","text":"Graph Attention","textPreview":"Graph Attention","textChars":15,"textLines":1,"bbox":[118,417,200,32]}
+{"kind":"textbox","id":"sh/9kv2507a","slide":1,"name":"teacher-output","text":"logits + 变长关系轨迹","textPreview":"logits + 变长关系轨迹","textChars":15,"textLines":1,"bbox":[78,490,242,26]}
+{"kind":"shape","id":"sh/al43e58v","slide":1,"name":"student-panel","bbox":[940,162,282,370]}
+{"kind":"textbox","id":"sh/vmxk7apg","slide":1,"name":"student-pill","text":"LIGHTST STUDENT","textPreview":"LIGHTST STUDENT","textChars":15,"textLines":1,"bbox":[960,180,205,32]}
+{"kind":"textbox","id":"sh/5gzmx4ri","slide":1,"name":"student-title","text":"图无关轻量学生","textPreview":"图无关轻量学生","textChars":7,"textLines":1,"bbox":[960,220,242,42]}
+{"kind":"textbox","id":"sh/kfq54zax","slide":1,"name":"student-input","text":"节点 ID / 属性 + 查询时间","textPreview":"节点 ID / 属性 + 查询时间","textChars":17,"textLines":1,"bbox":[960,264,242,30]}
+{"kind":"textbox","id":"sh/jeh4vu9c","slide":1,"name":"student-num-0","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[962,312,34,30]}
+{"kind":"textbox","id":"sh/idon2psr","slide":1,"name":"student-step-0","text":"Node-Time Encoding","textPreview":"Node-Time Encoding","textChars":18,"textLines":1,"bbox":[1000,311,200,32]}
+{"kind":"textbox","id":"sh/t4z614ru","slide":1,"name":"student-num-1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[962,365,34,30]}
+{"kind":"textbox","id":"sh/s3q58ja9","slide":1,"name":"student-step-1","text":"Residual MLP","textPreview":"Residual MLP","textChars":12,"textLines":1,"bbox":[1000,364,200,32]}
+{"kind":"textbox","id":"sh/72h4ze9o","slide":1,"name":"student-num-2","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[962,418,34,30]}
+{"kind":"textbox","id":"sh/618n69s3","slide":1,"name":"student-step-2","text":"Relation Slots","textPreview":"Relation Slots","textChars":14,"textLines":1,"bbox":[1000,417,200,32]}
+{"kind":"textbox","id":"sh/h8j65orq","slide":1,"name":"student-output","text":"固定槽 + 快速候选打分","textPreview":"固定槽 + 快速候选打分","textChars":12,"textLines":1,"bbox":[960,490,242,26]}
+{"kind":"shape","id":"sh/g7a5cja5","slide":1,"name":"alignment-strip","bbox":[58,568,1164,98]}
+{"kind":"textbox","id":"sh/c3up4nud","slide":1,"name":"align-num-0","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[88,586,34,26]}
+{"kind":"textbox","id":"sh/d43qdsby","slide":1,"name":"align-title-0","text":"概率对齐","textPreview":"概率对齐","textChars":4,"textLines":1,"bbox":[130,578,205,40]}
+{"kind":"textbox","id":"sh/q1c72dc7","slide":1,"name":"align-formula-0","text":"pᵀ ↔ pˢ","textPreview":"pᵀ ↔ pˢ","textChars":7,"textLines":1,"bbox":[88,620,315,28]}
+{"kind":"shape","id":"sh/b2l8bits","slide":1,"name":"align-divider-1","bbox":[446,585,0,62]}
+{"kind":"textbox","id":"sh/ozup0nuh","slide":1,"name":"align-num-1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[470,586,34,26]}
+{"kind":"textbox","id":"sh/p03q98b2","slide":1,"name":"align-title-1","text":"排序对齐","textPreview":"排序对齐","textChars":4,"textLines":1,"bbox":[512,578,205,40]}
+{"kind":"textbox","id":"sh/2xc7ydcb","slide":1,"name":"align-formula-1","text":"CDFᵀ ↔ CDFˢ","textPreview":"CDFᵀ ↔ CDFˢ","textChars":11,"textLines":1,"bbox":[470,620,315,28]}
+{"kind":"shape","id":"sh/3yl87itw","slide":1,"name":"align-divider-2","bbox":[828,585,0,62]}
+{"kind":"textbox","id":"sh/8ve9c7ul","slide":1,"name":"align-num-2","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[852,586,34,26]}
+{"kind":"textbox","id":"sh/9w7qlcb6","slide":1,"name":"align-title-2","text":"关系结构对齐","textPreview":"关系结构对齐","textChars":6,"textLines":1,"bbox":[894,578,205,40]}
+{"kind":"textbox","id":"sh/jq9sb6d8","slide":1,"name":"align-formula-2","text":"变长历史 ↔ 固定槽","textPreview":"变长历史 ↔ 固定槽","textChars":10,"textLines":1,"bbox":[852,620,315,28]}
+{"kind":"notes","id":"nt/erp74s","slide":1,"text":""}
+{"kind":"slide","id":"sl/z3e1iu","slide":2,"title":"MATHEMATICAL OBJECTIVE · NO DERIVATION","textShapes":29}
+{"kind":"shape","id":"sh/bi9o7epc","slide":2,"name":"ambient-glow-top","bbox":[1000,-30,320,240]}
+{"kind":"shape","id":"sh/cjipgj6x","slide":2,"name":"ambient-glow-bottom","bbox":[-50,520,300,240]}
+{"kind":"textbox","id":"sh/xkr69o7i","slide":2,"name":"eyebrow-2","text":"MATHEMATICAL OBJECTIVE · NO DERIVATION","textPreview":"MATHEMATICAL OBJECTIVE · NO DERIVATION","textChars":38,"textLines":1,"bbox":[60,26,440,24]}
+{"kind":"textbox","id":"sh/2tgna98v","slide":2,"name":"title-2","text":"联合蒸馏目标：任务监督 × 三层迁移 × 槽多样性","textPreview":"联合蒸馏目标：任务监督 × 三层迁移 × 槽多样性","textChars":25,"textLines":1,"bbox":[60,55,1150,62]}
+{"kind":"textbox","id":"sh/ne9o3epg","slide":2,"name":"page-2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1170,26,42,24]}
+{"kind":"shape","id":"sh/ofi5cj61","slide":2,"name":"header-rule-2","bbox":[60,126,1160,0]}
+{"kind":"shape","id":"sh/pgr65o7m","slide":2,"name":"joint-objective-frame","bbox":[60,144,1160,100]}
+{"kind":"textbox","id":"sh/epgn6p8j","slide":2,"name":"joint-objective-label","text":"JOINT OBJECTIVE","textPreview":"JOINT OBJECTIVE","textChars":15,"textLines":1,"bbox":[82,151,170,22]}
+{"kind":"textbox","id":"sh/fqpozup4","slide":2,"name":"joint-objective-line-1","text":"𝓛 = λtask𝓛CE  +  λlogit𝓛KD  +  λrank𝓛W1","textPreview":"𝓛 = λtask𝓛CE  +  λlogit𝓛KD  +  λrank𝓛W1","textChars":43,"textLines":1,"bbox":[90,169,1100,36]}
+{"kind":"textbox","id":"sh/nupsfi5o","slide":2,"name":"joint-objective-line-2","text":"+  λrel𝓛CUT-FGW  +  λdiv𝓛div","textPreview":"+  λrel𝓛CUT-FGW  +  λdiv𝓛div","textChars":30,"textLines":1,"bbox":[90,204,1100,32]}
+{"kind":"shape","id":"sh/mtgb6do3","slide":2,"name":"ce-kd-accent","bbox":[60,262,76,0]}
+{"kind":"textbox","id":"sh/9w7ahsne","slide":2,"name":"ce-kd-index","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[60,270,34,22]}
+{"kind":"textbox","id":"sh/8vyt8n6t","slide":2,"name":"ce-kd-label","text":"CE + LOGIT KD","textPreview":"CE + LOGIT KD","textChars":13,"textLines":1,"bbox":[102,263,503,32]}
+{"kind":"textbox","id":"sh/vypcji5k","slide":2,"name":"ce-formula","text":"𝓛CE = − 1/B ∑b log [ exp(zˢ[b,yb]) / ∑c exp(zˢ[b,c]) ]","textPreview":"𝓛CE = − 1/B ∑b log [ exp(zˢ[b,yb]) / ∑c exp(zˢ[b,c]) ]","textChars":55,"textLines":1,"bbox":[60,292,555,34]}
+{"kind":"textbox","id":"sh/axgbaxoz","slide":2,"name":"probability-definitions","text":"pᵀ[b,c] = softmax(zᵀ[b]/T)c,    pˢ[b,c] = softmax(zˢ[b]/T)c","textPreview":"pᵀ[b,c] = softmax(zᵀ[b]/T)c,    pˢ[b,c] = softmax(zˢ[b]/T)c","textChars":59,"textLines":1,"bbox":[60,326,555,32]}
+{"kind":"textbox","id":"sh/x0rulsnq","slide":2,"name":"kd-formula","text":"𝓛KD = T²/B ∑b,c pᵀ[b,c] log( pᵀ[b,c] / pˢ[b,c] )","textPreview":"𝓛KD = T²/B ∑b,c pᵀ[b,c] log( pᵀ[b,c] / pˢ[b,c] )","textChars":49,"textLines":1,"bbox":[60,359,555,38]}
+{"kind":"shape","id":"sh/wzytcn65","slide":2,"name":"upper-divider","bbox":[638,267,0,126]}
+{"kind":"shape","id":"sh/r25s7y5g","slide":2,"name":"rank-w1-accent","bbox":[662,262,76,0]}
+{"kind":"textbox","id":"sh/q1wbytov","slide":2,"name":"rank-w1-index","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[662,270,34,22]}
+{"kind":"textbox","id":"sh/uxkv618j","slide":2,"name":"rank-w1-label","text":"RANK-WASSERSTEIN","textPreview":"RANK-WASSERSTEIN","textChars":16,"textLines":1,"bbox":[704,263,516,32]}
+{"kind":"textbox","id":"sh/fytwf6po","slide":2,"name":"rank-order-formula","text":"πb = argsort(zᵀ[b]),    Fᴹ[b,k] = ∑ᵏᵣ₌₁ pᴹ[b,πb(r)]","textPreview":"πb = argsort(zᵀ[b]),    Fᴹ[b,k] = ∑ᵏᵣ₌₁ pᴹ[b,πb(r)]","textChars":51,"textLines":1,"bbox":[662,296,558,36]}
+{"kind":"textbox","id":"sh/gjmd8b69","slide":2,"name":"w1-formula-line-1","text":"𝓛W1 = 1/B ∑b  1/(C−1) ∑ᶜ⁻¹ₖ₌₁","textPreview":"𝓛W1 = 1/B ∑b  1/(C−1) ∑ᶜ⁻¹ₖ₌₁","textChars":30,"textLines":1,"bbox":[662,337,558,30]}
+{"kind":"textbox","id":"sh/hkvehg7u","slide":2,"name":"w1-formula-line-2","text":"wₖ |Fᵀ[b,k] − Fˢ[b,k]|","textPreview":"wₖ |Fᵀ[b,k] − Fˢ[b,k]|","textChars":22,"textLines":1,"bbox":[662,367,558,30]}
+{"kind":"shape","id":"sh/6tkv2h87","slide":2,"name":"lower-separator","bbox":[60,412,1160,0]}
+{"kind":"shape","id":"sh/7utwbmps","slide":2,"name":"cutfgw-accent","bbox":[60,428,76,0]}
+{"kind":"textbox","id":"sh/sv2d4rqd","slide":2,"name":"cutfgw-index","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[60,436,34,22]}
+{"kind":"textbox","id":"sh/twbedw7y","slide":2,"name":"cutfgw-label","text":"CUT-FGW COST","textPreview":"CUT-FGW COST","textChars":12,"textLines":1,"bbox":[102,429,696,32]}
+{"kind":"textbox","id":"sh/ip0veh8b","slide":2,"name":"attribute-cost","text":"Aᵢⱼ = (ãᵀᵢ − aˢⱼ)²","textPreview":"Aᵢⱼ = (ãᵀᵢ − aˢⱼ)²","textChars":18,"textLines":1,"bbox":[60,463,730,32]}
+{"kind":"textbox","id":"sh/jq9w7mpw","slide":2,"name":"gw-cost","text":"Gᵢⱼ(Dᵀ,Dˢ,Π) = ∑ₖ,ₗ (Dᵀᵢₖ − Dˢⱼₗ)² Πₖₗ","textPreview":"Gᵢⱼ(Dᵀ,Dˢ,Π) = ∑ₖ,ₗ (Dᵀᵢₖ − Dˢⱼₗ)² Πₖₗ","textChars":38,"textLines":1,"bbox":[60,496,730,34]}
+{"kind":"textbox","id":"sh/1kzydkre","slide":2,"name":"fgw-cost-line-1","text":"CFGW(Π) = αA + (1−α) ·","textPreview":"CFGW(Π) = αA + (1−α) ·","textChars":22,"textLines":1,"bbox":[60,536,730,30]}
+{"kind":"textbox","id":"sh/0jqhkfqt","slide":2,"name":"fgw-cost-line-2","text":"[ λₘG(Dᵀₘ,Dˢₘ,Π) + λdG(Dᵀd,Dˢd,Π) ] / (λₘ+λd)","textPreview":"[ λₘG(Dᵀₘ,Dˢₘ,Π) + λdG(Dᵀd,Dˢd,Π) ] / (λₘ+λd)","textChars":45,"textLines":1,"bbox":[60,566,730,34]}
+{"kind":"shape","id":"sh/zihgba98","slide":2,"name":"lower-divider","bbox":[820,433,0,169]}
+{"kind":"shape","id":"sh/ehozi58n","slide":2,"name":"sinkhorn-accent","bbox":[846,428,76,0]}
+{"kind":"textbox","id":"sh/dgfy90r2","slide":2,"name":"sinkhorn-index","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[846,436,34,22]}
+{"kind":"textbox","id":"sh/cf6hgfah","slide":2,"name":"sinkhorn-label","text":"UNBALANCED SINKHORN","textPreview":"UNBALANCED SINKHORN","textChars":19,"textLines":1,"bbox":[888,429,332,32]}
+{"kind":"textbox","id":"sh/rexg7a9w","slide":2,"name":"kernel-formula","text":"K = P ⊙ exp(−CFGW/ε)","textPreview":"K = P ⊙ exp(−CFGW/ε)","textChars":20,"textLines":1,"bbox":[846,466,374,32]}
+{"kind":"textbox","id":"sh/qdoze5sr","slide":2,"name":"rho-formula","text":"ρ = τ / (τ+ε)","textPreview":"ρ = τ / (τ+ε)","textChars":13,"textLines":1,"bbox":[846,497,374,30]}
+{"kind":"textbox","id":"sh/psfy50r6","slide":2,"name":"sinkhorn-updates","text":"u ← (a / Kv) ^ρ\nv ← (b / Kᵀu) ^ρ\nΠ★ = diag(u) K diag(v)","textPreview":"u ← (a / Kv) ^ρ | v ← (b / Kᵀu) ^ρ | Π★ = diag(u) K diag(v)","textChars":55,"textLines":3,"bbox":[846,529,374,76]}
+{"kind":"shape","id":"sh/4r6hcval","slide":2,"name":"diversity-footer","bbox":[60,628,1160,62]}
+{"kind":"textbox","id":"sh/4vypczqh","slide":2,"name":"diversity-label","text":"05  SLOT DIVERSITY","textPreview":"05  SLOT DIVERSITY","textChars":18,"textLines":1,"bbox":[78,642,190,30]}
+{"kind":"textbox","id":"sh/5w7ql4r2","slide":2,"name":"diversity-formula","text":"𝓛div = 1/[BS(S−1)] ∑b ∑i≠j cos²(s[b,i], s[b,j])","textPreview":"𝓛div = 1/[BS(S−1)] ∑b ∑i≠j cos²(s[b,i], s[b,j])","textChars":48,"textLines":1,"bbox":[280,638,920,40]}
+{"kind":"notes","id":"nt/z3e1iu","slide":2,"text":""}
