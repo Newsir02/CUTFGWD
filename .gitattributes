@@ -1,0 +1,16 @@
+# 统一文本换行，避免 Windows 提交/检出产生 CRLF 破坏 shell 脚本
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# 二进制文件不做换行转换
+*.pt    binary
+*.pptx  binary
+*.png   binary
+*.jpg   binary
