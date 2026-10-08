@@ -1,1 +1,209 @@
-# CUTFGWD
+# CUTFGWD：时序图神经网络向 MLP / 小模型的蒸馏
+
+本项目研究**时序图神经网络（Temporal GNN，以 TGN 为代表）到轻量模型的知识蒸馏**，
+目标是在动态链路预测任务上，把 TGN 的预测能力与**关系知识**迁移到不依赖（或只依赖一跳）
+图结构的轻量学生模型中，兼顾精度与推理效率。
+
+核心方法：**Anchor Relation + Structural OT** 的统一蒸馏框架。
+
+---
+
+## 1. 背景与动机
+
+- TGN 通过**记忆模块 + 时间图注意力**在连续时间事件流上取得很强的链路预测性能，
+  但推理需要多跳历史邻居与记忆维护，延迟高、依赖图结构，难以部署。
+- 图无关 MLP 推理快、无图依赖，但缺少结构/关系信息，精度差距大。
+- 因此：把 TGN 蒸馏到 MLP / 轻量小模型，并**显式迁移关系表示与关系结构**。
+
+---
+
+## 2. 方法总览
+
+### 2.1 教师与学生
+
+| 角色 | 模型 | 说明 |
+|---|---|---|
+| 教师 | `PyGTGNTeacher` | PyG TGN：`TGNMemory` + `TransformerConv` 时间图注意力 + `LinkPredictor` + 关系投影头 `relation_projector` |
+| 学生 A | `LightSTMLPStudent` | **图无关 MLP**：只读节点特征、节点 ID、查询时间；含固定关系槽 |
+| 学生 B | `LightGNNStudent` | 在 MLP 学生上加**一层邻居 mean-pooling**（无 memory、无 attention、无多层消息传递） |
+
+### 2.2 教师关系头（先修）
+
+教师原本只用预测损失训练，`relation_projector` 从未获得梯度（是随机的）。本项目：
+
+- 教师预训练时可选地请求关系输出，并用**自监督对齐**训练关系头：
+  `L_align = 1 - cos(A(pool(z_T)), sg(h_s)) + ||A(pool(z_T)) - sg(h_s)||²`，
+  其中 `z_T` 为历史关系 token，`h_s` 为打分用的源节点嵌入，`sg` 为 stop-gradient。
+- 对已有（无关系头）的教师 checkpoint，提供 **关系头热启动**（冻结主干、只训练关系头）：
+  `--teacher-relation-warmup-epochs N`，无需重训整个教师。
+
+### 2.3 三条蒸馏信号
+
+1. **Prediction Distillation**：对齐候选预测分布（KL）。
+2. **Anchor Relation Distillation**：教师历史关系 token 与学生固定关系槽都按“年龄”排序，
+   以**年龄为锚点**做最近邻匹配后对齐表示（cos + MSE），迁移关系**内容**。
+3. **Structural OT Distillation**：复用 `CausalUnbalancedTemporalFGW`（CUT-FGW），
+   对教师变长关系轨迹与学生固定槽的**二阶结构**（token 间关系矩阵 + 时间差分动态关系矩阵）
+   做非平衡 Sinkhorn + FGW 最优传输，迁移关系**结构**。
+
+另含排序关系项（Rank-Wasserstein）与关系槽多样性正则。
+
+### 2.4 总损失
+
+```
+L = w_task · L_sup(CE)
+  + w_logit · L_pred(KL)
+  + w_rank  · L_rank(W1, 候选排序关系)
+  + w_anchor· L_anchor(年龄锚定关系表示)
+  + w_relation · L_OT(CUT-FGW 结构最优传输)
+  + w_diversity · L_div(关系槽多样性)
+```
+
+损失实现见 `loss/distillation.py: CUTFGWDDistillation`；权重为 0 的分支会被**真正跳过**。
+
+### 2.5 蒸馏流程
+
+```
+事件流 batch → 教师(冻结)打分 → 教师关系轨迹
+                    │
+             学生前向（MLP 或轻量 GNN）
+                    │
+   L_pred + L_rank + L_anchor + L_OT + L_div  → 反向传播
+                    │
+        官方验证集 MRR 早停 → 保存最优学生 → 官方测试集 MRR
+```
+
+---
+
+## 3. 与普通知识蒸馏 / 原 CUT-FGW 的区别
+
+| 维度 | 普通 KD | 原 CUT-FGW | 本方法 |
+|---|---|---|---|
+| 迁移对象 | 仅 logits | 关系结构（OT） | logits + 排序关系 + 关系表示 + 关系结构 |
+| 教师关系头 | 不涉及 | 随机、未训练 | 自监督训练 / 热启动 |
+| 关系对齐层次 | — | 仅二阶结构 | 一阶表示（Anchor）+ 二阶结构（OT） |
+| 学生随机性 | 与教师共用种子 | 与教师共用种子 | 独立 `--student-seed` |
+| 方法切换 | — | 固定 | `--method baseline\|anchor_ot`，默认路径不变 |
+
+---
+
+## 4. 代码目录
+
+```
+CUTFGWD/
+├── train.py                     # 训练/蒸馏主入口（--stage / --method / --student-arch ...）
+├── train-tgn.sh                 # 教师预训练脚本
+├── train-mlp.sh                 # 监督 MLP 学生脚本
+├── train-kd.sh                  # 原 CUT-FGW 蒸馏 baseline 脚本
+├── train-anchor.sh              # 新方法 Anchor Relation + Structural OT 脚本
+├── IDEA.md                      # 方法详细设计文档（含公式、消融、诊断）
+├── README.md
+├── dataset/
+│   ├── temporal.py              # 事件流 Bundle、候选批加载器（训练负采样 / TGB）
+│   ├── tgb_temporal.py          # TGB 数据集加载（PyG TemporalData）
+│   └── synthetic_temporal.py    # 合成时序图（CPU smoke 测试）
+├── model/
+│   ├── teacher.py               # PyGTGNTeacher：TGN 教师 + 关系投影头（可选对齐头）
+│   ├── student.py               # LightSTMLPStudent：图无关 MLP 学生
+│   ├── gnn_student.py           # LightGNNStudent：轻量 1 层 GNN 学生
+│   ├── tgn.py                   # GraphAttentionEmbedding + LinkPredictor
+│   └── layers.py                # MLP / 残差块 / 时间编码
+├── loss/
+│   ├── distillation.py          # 总损失 CUTFGWDDistillation（零权重跳过）
+│   ├── kd.py                    # KL / Rank-Wasserstein / 关系对齐 / Anchor / 多样性
+│   └── cutfgw.py                # CausalUnbalancedTemporalFGW（结构 OT）
+├── util/
+│   ├── checkpoint.py            # 模型 checkpoint 存取与校验
+│   ├── metrics.py               # MRR / Hits 指标
+│   ├── tgb_evaluation.py        # TGB 官方负采样评测
+│   ├── training.py              # 延迟/吞吐基准、参数统计
+│   └── seed.py                  # 随机种子
+├── tests/                       # 单元与流程测试
+├── docs/                        # 设计/计划文档
+└── artifacts/                   # 演示材料
+```
+
+---
+
+## 5. 快速开始
+
+### 5.1 环境
+
+- Python 3.10、PyTorch、`torch-geometric`、`py-tgb`（评测 TGB 时需要）
+- 数据：TGB `tgbl-wiki` 等，放在 `datasets/`（已加入 `.gitignore`）
+
+### 5.2 Baseline（与原始实现一致）
+
+```bash
+# 教师
+bash train-tgn.sh
+# 监督 MLP 学生
+python train.py --stage student --dataset tgbl-wiki --output-dir checkpoints/wiki-mlp
+# 原 CUT-FGW 蒸馏
+python train.py --stage distill --dataset tgbl-wiki \
+  --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
+  --method baseline --output-dir checkpoints/wiki-kd-baseline
+```
+
+### 5.3 新方法（Anchor Relation + Structural OT）
+
+```bash
+# 方式一：旧教师 + 关系头热启动（省时）
+python train.py --stage distill --dataset tgbl-wiki \
+  --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
+  --method anchor_ot --teacher-relation-warmup-epochs 5 \
+  --anchor-weight 0.5 --logit-weight 0.3 --relation-weight 0.5 \
+  --sinkhorn-iterations 10 --fgw-iterations 2 \
+  --student-seed 42 --output-dir checkpoints/wiki-anchor-ot-s42
+
+# 方式二：重训带关系头的教师
+bash train-tgn.sh --method anchor_ot
+
+# 轻量 GNN 学生
+python train.py --stage distill --dataset tgbl-wiki \
+  --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
+  --method anchor_ot --student-arch gnn --student-neighbors 8 \
+  --teacher-relation-warmup-epochs 5 \
+  --output-dir checkpoints/wiki-anchor-ot-gnn-s42
+```
+
+### 5.4 关键参数
+
+| 参数 | 含义 |
+|---|---|
+| `--method {baseline,anchor_ot}` | 方法切换；`baseline` 与旧行为一致 |
+| `--student-arch {mlp,gnn}` | 学生架构：图无关 MLP / 轻量 1 层 GNN |
+| `--teacher-relation-weight` | 教师关系头自监督权重（`>0` 才构建关系对齐头） |
+| `--teacher-relation-warmup-epochs` | 对旧 checkpoint 做关系头热启动的 epoch 数 |
+| `--anchor-weight` | Anchor Relation 蒸馏权重 |
+| `--relation-weight` | Structural OT（CUT-FGW）权重 |
+| `--logit-weight` / `--rank-weight` | 预测蒸馏 / 排序关系蒸馏权重 |
+| `--student-seed` | 学生独立随机种子（配对实验用） |
+
+---
+
+## 6. 数据集与评测
+
+- 数据集：Temporal Graph Benchmark（TGB），如 `tgbl-wiki`。
+- 划分与负采样：**保持 TGB 官方时间划分与官方负采样协议不变**。
+- 指标：官方 MRR（`util/tgb_evaluation.py`）。
+- 公平性：`--seed` 固定数据与负采样，`--student-seed` 取 42/43/44 做配对比较。
+
+---
+
+## 7. 测试
+
+```bash
+python -m pytest tests -q
+```
+
+- 覆盖：TGN 教师、LightST MLP 学生、轻量 GNN 学生、Anchor 关系损失、
+  CUT-FGW 反传、训练阶段流程、checkpoint 契约、数据契约等。
+- 合成数据 smoke 可在 CPU 上完成 `data → teacher → student → relation → CUT-FGW → loss → backward → step`。
+
+---
+
+## 8. 更多
+
+方法细节、公式、消融设计与实测诊断（参数量口径、蒸馏耗时分解、关系头修复）见
+[`IDEA.md`](IDEA.md)。
