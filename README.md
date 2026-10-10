@@ -207,3 +207,53 @@ python -m pytest tests -q
 
 方法细节、公式、消融设计与实测诊断（参数量口径、蒸馏耗时分解、关系头修复）见
 [`IDEA.md`](IDEA.md)。
+
+---
+
+## 9. 版本更新：MLP 蒸馏修正（v3）
+
+### 9.1 审查结论
+
+- **教师**：TGN + 可选关系头，工作正常。重训带关系头后教师略升
+  （val/test：0.7167/0.6735 → **0.7249/0.6805**），关系头可作为辅助/正则。
+- **学生**：原图无关 MLP **只读节点特征 + 节点 ID + 全局时间**，没有任何结构或
+  近期时序输入——这是它"结构感知缺失、蒸馏难提升"的根因。
+- **蒸馏方法**：发现并修复一个 **Anchor Relation 的年龄锚点 bug**。教师年龄按
+  **全局**时间跨度归一化后，单条近期历史内的年龄都接近 0；而学生关系槽年龄遍布
+  `[0,1]`。直接按原始年龄做最近邻匹配会让**所有学生槽都匹配到同一个（最近的）
+  教师 token**，锚点匹配退化为常数。现已改为**逐样本把两侧年龄各自重标定到 [0,1]**。
+
+### 9.2 主要修改
+
+1. **离线结构/时序特征（`--structure-features`）**：从**训练集**事件流统计每节点
+   5 维特征——出度、入度、活跃度（log1p）、首次出现位置、最近出现位置，标准化后
+   拼接到图无关学生的输入。推理时无需访问图，即让 MLP 具备"结构感知 + 近期活跃度"。
+   （参考 GLNN、InfGraND、L-STEP。）
+2. **修复 `anchor_relation_loss` 的年龄归一化**（见 9.1）。
+3. **明确 MLP 蒸馏配方**：图无关 MLP 使用"结构特征 + 预测/排序关系蒸馏"；
+   关系 token / CUT-FGW 更适合**结构化学生**（1 层 GNN），对 MLP 会注入噪声。
+
+### 9.3 用法
+
+```bash
+# 监督 MLP（带结构特征），作为公平对照
+bash train-mlp-struct.sh
+
+# MLP 蒸馏推荐配方（结构特征 + logit/rank KD，关闭关系 token/OT）
+bash train-mlp-kd.sh
+
+# 结构化学生（1 层 GNN）仍用关系结构蒸馏
+python train.py --stage distill --dataset tgbl-wiki \
+  --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
+  --method anchor_ot --student-arch gnn --student-neighbors 8 \
+  --output-dir checkpoints/wiki-anchor-ot-gnn-s42
+```
+
+### 9.4 相关文献
+
+- GLNN：Graph-less Neural Networks（arXiv:2110.08727）
+- LLP：Linkless Link Prediction via Relational Distillation（arXiv:2210.05801）
+- P&D：Propagation-Embracing MLPs（arXiv:2311.11759）
+- PGKD：Edge-free but Structure-aware（arXiv:2303.13763）
+- InfGraND：Influence-Guided GNN-to-MLP KD（arXiv:2601.08033）
+- L-STEP：Learnable Spatial-Temporal Positional Encoding（arXiv:2506.08309）

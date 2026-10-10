@@ -86,6 +86,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default="mlp",
     )
     parser.add_argument("--student-neighbors", type=int, default=8)
+    parser.add_argument(
+        "--structure-features",
+        action="store_true",
+        default=None,
+        help=(
+            "把离线统计的结构/时序节点特征拼接到学生输入，"
+            "使图无关学生也具备结构/近期活跃度感知。"
+        ),
+    )
     parser.add_argument("--time-dim", type=int, default=16)
     parser.add_argument("--relation-dim", type=int, default=64)
     parser.add_argument("--relation-slots", type=int, default=8)
@@ -211,6 +220,9 @@ def apply_method_configuration(args: argparse.Namespace) -> None:
             args.anchor_weight = 0.0
         if args.teacher_relation_weight is None:
             args.teacher_relation_weight = 0.0
+    if args.structure_features is None:
+        args.structure_features = args.method == "anchor_ot"
+    args.structure_features = bool(args.structure_features)
 
 
 def resolve_student_seed(args: argparse.Namespace) -> int:
@@ -340,10 +352,24 @@ def build_teacher(
 def build_student(
     node_features: Tensor,
     args: argparse.Namespace,
+    structure_features: Optional[Tensor] = None,
 ) -> nn.Module:
+    student_features = node_features
+    if (
+        bool(getattr(args, "structure_features", False))
+        and structure_features is not None
+    ):
+        # 拼接离线结构/时序特征；这些特征只从训练集统计，推理时无需访问图。
+        student_features = torch.cat(
+            [
+                node_features.to(torch.float32),
+                structure_features.to(torch.float32),
+            ],
+            dim=-1,
+        )
     if args.student_arch == "gnn":
         return LightGNNStudent(
-            node_features=node_features,
+            node_features=student_features,
             hidden_dim=args.student_hidden,
             time_dim=args.time_dim,
             relation_dim=args.relation_dim,
@@ -353,7 +379,7 @@ def build_student(
             neighbors=args.student_neighbors,
         )
     return LightSTMLPStudent(
-        node_features=node_features,
+        node_features=student_features,
         hidden_dim=args.student_hidden,
         time_dim=args.time_dim,
         relation_dim=args.relation_dim,
@@ -1084,7 +1110,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         # 学生独立种子：不影响已构造的数据/教师，仅控制学生初始化与 dropout。
         seed_everything(int(args.student_seed))
         freeze_teacher(teacher)
-        student = build_student(bundle.node_features, args).to(device)
+        student = build_student(bundle.node_features, args, bundle.structure_features).to(device)
         print_model_parameters("Student", student)
         distill_student(
             student,
@@ -1155,7 +1181,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     if args.stage == "student":
         seed_everything(int(args.student_seed))
-        student = build_student(bundle.node_features, args).to(device)
+        student = build_student(bundle.node_features, args, bundle.structure_features).to(device)
         print_model_parameters("Student", student)
         train_supervised_student(
             student,

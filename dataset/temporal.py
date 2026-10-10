@@ -25,6 +25,7 @@ class TemporalGraphBundle:
     destination_nodes: Tensor
     official_evaluation: bool
     tgb_dataset: object | None = None
+    structure_features: Tensor | None = None
 
     def split(self, name: SplitName) -> TemporalData:
         if name == "train":
@@ -93,6 +94,73 @@ def _prepare_node_features(
     return features.contiguous()
 
 
+def compute_structure_features(
+    src: Tensor,
+    dst: Tensor,
+    train_mask: Tensor,
+    num_rows: int,
+) -> Tensor:
+    """从训练集事件流统计每个节点的结构/时序特征。
+
+    这些特征只依赖训练集，推理时作为静态输入喂给图无关学生，从而在不访问图的
+    前提下提供"结构感知"和"近期活跃度"信息（参考 GLNN / InfGraND / L-STEP）。
+    输出已按维标准化。
+    """
+
+    train_src = src[train_mask].long()
+    train_dst = dst[train_mask].long()
+    out_degree = torch.zeros(num_rows, dtype=torch.float)
+    in_degree = torch.zeros(num_rows, dtype=torch.float)
+    out_degree.index_add_(0, train_src, torch.ones(train_src.numel()))
+    in_degree.index_add_(0, train_dst, torch.ones(train_dst.numel()))
+    position_count = int(train_src.numel())
+    positions = torch.arange(position_count, dtype=torch.float)
+    appear_node = torch.cat([train_src, train_dst])
+    appear_position = torch.cat([positions, positions])
+    span = max(position_count - 1, 1)
+    first_seen = torch.full((num_rows,), float("inf")).scatter_reduce_(
+        0,
+        appear_node,
+        appear_position,
+        reduce="amin",
+        include_self=True,
+    )
+    last_seen = torch.full((num_rows,), -1.0).scatter_reduce_(
+        0,
+        appear_node,
+        appear_position,
+        reduce="amax",
+        include_self=True,
+    )
+    seen = torch.isfinite(first_seen)
+    first_norm = torch.where(
+        seen,
+        first_seen / float(span),
+        torch.zeros(()),
+    )
+    last_norm = torch.where(
+        seen,
+        last_seen.clamp_min(0.0) / float(span),
+        torch.zeros(()),
+    )
+    activity = torch.log1p(out_degree + in_degree)
+    features = torch.stack(
+        [out_degree, in_degree, activity, first_norm, last_norm],
+        dim=-1,
+    )
+    mean = features.mean(dim=0, keepdim=True)
+    std = features.std(dim=0, keepdim=True).clamp_min(1.0e-6)
+    standardized = (features - mean) / std
+    # 训练集中从未出现的节点映射为中性 0，而不是 -mean/std。
+    seen_any = (out_degree + in_degree) > 0.0
+    standardized = torch.where(
+        seen_any.unsqueeze(-1),
+        standardized,
+        torch.zeros(()),
+    )
+    return standardized.contiguous()
+
+
 def build_temporal_graph_bundle(
     *,
     dataset_name: str,
@@ -159,6 +227,12 @@ def build_temporal_graph_bundle(
     destination_nodes = torch.unique(dst, sorted=True)
     if destination_nodes.numel() < 2:
         raise ValueError("The destination node domain must contain at least two nodes.")
+    structure_features = compute_structure_features(
+        src,
+        dst,
+        train_mask,
+        int(features.size(0)),
+    )
 
     return TemporalGraphBundle(
         dataset_name=dataset_name,
@@ -170,6 +244,7 @@ def build_temporal_graph_bundle(
         destination_nodes=destination_nodes,
         official_evaluation=official_evaluation,
         tgb_dataset=tgb_dataset,
+        structure_features=structure_features,
     )
 
 

@@ -335,83 +335,97 @@ python train.py --stage distill --dataset tgbl-wiki \
 
 ---
 
-## 20. Êµ²âÕï¶ÏÓë¹¤³ÌĞŞ¸´£¨v2£©
+## 20. å®æµ‹è¯Šæ–­ä¸å·¥ç¨‹ä¿®å¤
 
-### 20.1 ²ÎÊıÁ¿¶Ô±ÈµÄÕıÈ·½â¶Á
+### 20.1 å‚æ•°é‡å¯¹æ¯”çš„æ­£ç¡®è§£è¯»ï¼ˆtgbl-wiki, num_nodes=9227ï¼‰
 
-`tgbl-wiki`£º½ÌÊ¦ `num_nodes=9227`¡£
-
-| Ä£ĞÍ | ¿ÉÑµÁ·²ÎÊı | ×é³É | ÔËĞĞÊ±×´Ì¬£¨²»¼ÆÈë²ÎÊı£© |
+| æ¨¡å‹ | å¯è®­ç»ƒå‚æ•° | ç»„æˆ | è¿è¡Œæ—¶çŠ¶æ€ |
 |---|---:|---|---:|
-| Teacher (TGN, hidden=32, 2 ²ã) | 68,417 | memory GRU 27,488 + GNN 20,512 + relation_projector 18,304 + link_predictor 2,145 | 775,071£¨memory + neighbor£© |
-| Student (MLP + node embedding) | 323,818 | **node_embeddings 295,264 (91%)** + ÆäÓà ~28k | 0 |
+| Teacher (TGN hidden=32, 2 å±‚) | 68,417 | memory 27,488 + GNN 20,512 + relation_projector 18,304 + link 2,145 | 775,071 |
+| Student (MLP + node embedding) | 323,818 | node_embeddings 295,264 (91%) + å…¶ä½™ ~28k | 0 |
 
-½áÂÛ£º½ÌÊ¦Ã»ÓĞ per-node ²ÎÊı£¬Æä per-node ĞÅÏ¢ÔÚÔËĞĞÊ± `memory` ÖĞ£»Ñ§ÉúµÄ²ÎÊıÁ¿¼¸ºõÈ«²¿ÊÇ
-Ëæ½ÚµãÊıÔö³¤µÄ²éÕÒ±í¡£¶şÕß²»¿ÉÖ±½Ó±È½Ï£¬Ó¦Í¬Ê±±¨¸æ²ÎÊıÓëÔËĞĞÊ±×´Ì¬¡£
+æ•™å¸ˆæ²¡æœ‰ per-node å‚æ•°ï¼ˆä¿¡æ¯åœ¨è¿è¡Œæ—¶ memory ä¸­ï¼‰ï¼›å­¦ç”Ÿçš„å‚æ•°å‡ ä¹å…¨æ˜¯éšèŠ‚ç‚¹æ•°å¢é•¿çš„
+æŸ¥æ‰¾è¡¨ã€‚äºŒè€…ä¸å¯ç›´æ¥æ¯”è¾ƒï¼Œåº”åŒæ—¶æŠ¥å‘Šå‚æ•°ä¸è¿è¡Œæ—¶çŠ¶æ€ã€‚
 
-### 20.2 ÕôÁóÂıµÄÕæÕıÔ­Òò£¨Êµ²â£¬batch=128£©
+### 20.2 è’¸é¦è€—æ—¶åˆ†è§£ï¼ˆå®æµ‹ batch=128ï¼‰
 
-| ½×¶Î | ĞŞ¸´Ç° | ĞŞ¸´ºó |
+| é˜¶æ®µ | ä¿®å¤å‰ | ä¿®å¤å |
 |---|---:|---:|
-| teacher Ç°Ïò£¨ÎŞ¹ØÏµ£© | 2.58 ms | 2.45 ms |
-| teacher ¹ØÏµ³éÈ¡ÔöÁ¿ | **36.77 ms** | **1.17 ms** |
-| student Ç°Ïò | 1.58 ms | 1.64 ms |
-| CUT-FGW Ä¿±ê£¨fgw=4, sink=20£© | 22.29 ms | 23.93 ms |
+| teacher å‰å‘ï¼ˆæ— å…³ç³»ï¼‰ | 2.58 ms | 2.45 ms |
+| teacher å…³ç³»æŠ½å–å¢é‡ | 36.77 ms | 1.17 ms |
+| student å‰å‘ | 1.58 ms | 1.64 ms |
+| CUT-FGW ç›®æ ‡ | 22.29 ms | 23.93 ms |
 
-ĞŞ¸´Ç°Æ¿¾±ÊÇ `_relation_outputs` µÄÖğĞĞ Python Ñ­»·£¨56%£©Óë CUT-FGW£¨34%£©£¬Ñ§Éú½ö 2%¡£
-ÏÖÒÑ½«¹ØÏµ³éÈ¡ÏòÁ¿»¯Îª `(node, event_id)` ÎÈ¶¨ÅÅĞò + segment gather£¬ºÄÊ±½µÔ¼ 31 ±¶¡£
-µ±Ç°Æ¿¾±Ö»Ê£ CUT-FGW£¬¿ÉÓÃ `--sinkhorn-iterations` / `--fgw-iterations` µ÷½Ú¡£
+ç“¶é¢ˆåŸæ˜¯ `_relation_outputs` çš„é€è¡Œ Python å¾ªç¯ä¸ CUT-FGWï¼›å­¦ç”Ÿåªå çº¦ 2%ã€‚ç°å·²å°†å…³ç³»
+æŠ½å–å‘é‡åŒ–ä¸º `(node, event_id)` ç¨³å®šæ’åº + segment gatherï¼Œé™çº¦ 31 å€ã€‚
 
-### 20.3 ĞÂÔöÄÜÁ¦
+### 20.3 å·¥ç¨‹ä¿®å¤
 
-- `--teacher-relation-warmup-epochs N`£º¼ÓÔØ¾É checkpoint£¨ÎŞ¹ØÏµÍ·£©Ê±£¬¶³½áÖ÷¸É¡¢½öÓÃ
-  `L_align` ¿ìËÙÑµÁ· `relation_projector` Óë `relation_align_head` N ¸ö epoch£¬ÎŞĞèÖØÑµ½ÌÊ¦¡£
-- ¼ÓÔØ½ÌÊ¦Ê±Èô CLI µÄ `--teacher-hidden/--teacher-layers` Óë checkpoint ÅäÖÃ²»Ò»ÖÂ»á´òÓ¡¾¯¸æ
-  £¨checkpoint ÅäÖÃÓÅÏÈ£©¡£
-- `association` »º³åÇøÓÉ `torch.empty` ¸ÄÎª `-1` ÉÚ±ø£¬Ïû³ıÎ´³õÊ¼»¯Öµµ¼ÖÂµÄÔ½½ç¡£
+- `--teacher-relation-warmup-epochs N`ï¼šåŠ è½½æ—§ checkpointï¼ˆæ— å…³ç³»å¤´ï¼‰æ—¶å†»ç»“ä¸»å¹²ã€ä»…ç”¨
+  `L_align` å¿«é€Ÿè®­ç»ƒå…³ç³»å¤´ï¼Œæ— éœ€é‡è®­æ•™å¸ˆã€‚
+- åŠ è½½æ•™å¸ˆæ—¶è‹¥ CLI çš„ `--teacher-hidden/--teacher-layers` ä¸ checkpoint ä¸ä¸€è‡´ä¼šå‘Šè­¦ã€‚
+- `association` ç¼“å†²åŒºç”± `torch.empty` æ”¹ä¸º `-1` å“¨å…µï¼Œæ¶ˆé™¤æœªåˆå§‹åŒ–å€¼è¶Šç•Œã€‚
 
 ---
 
-## 21. Ñ§Éú¼Ü¹¹À©Õ¹£ºÇáÁ¿ 1 ²ã GNN Ñ§Éú£¨Â·Ïß 3£©
+## 21. å­¦ç”Ÿæ¶æ„æ‰©å±•ï¼šè½»é‡ 1 å±‚ GNN å­¦ç”Ÿ
 
-### 21.1 ¶¯»ú
+- `model/gnn_student.py: LightGNNStudent`ï¼šç»§æ‰¿ LightST MLPï¼ŒåŠ ä¸€å±‚é‚»å±… mean-pooling
+  ï¼ˆæ—  memory/attention/å¤šå±‚ï¼‰ï¼Œ0 åˆå§‹åŒ–é—¨æ§èåˆï¼›å« `reset_state/update_state`ã€‚
+- è®­ç»ƒ/è¯„æµ‹å·²æ”¯æŒæœ‰çŠ¶æ€å­¦ç”Ÿçš„ reset/updateï¼Œæ— çŠ¶æ€ MLP è·¯å¾„ä¸å˜ã€‚
+- å®æµ‹ï¼ˆtgbl-wiki, å…³ç³»å¤´æ•™å¸ˆï¼‰ï¼šGNN å­¦ç”Ÿ test MRR 0.5492ï¼Œè¿œé«˜äºå›¾æ— å…³ MLP 0.38~0.40ï¼Œ
+  ä½†ä¸å†æ˜¯å›¾æ— å…³ï¼Œä¸”é€Ÿåº¦æå‡è¾ƒå°ï¼ˆå« 1 è·³é‚»å±…æŸ¥è¯¢ï¼‰ã€‚
 
-´¿Í¼ÎŞ¹Ø MLP Ñ§ÉúĞÅÏ¢²»×ã£¨Ö»¶Á src/candidates/timestamp£©£¬MRR Ã÷ÏÔµÍÓÚ½ÌÊ¦¡£
-ÌíÒ»²ãÁÚ¾Ó¾ÛºÏ£¬¿ÉÏÔÖø²¹³ä½á¹¹ĞÅÏ¢£¬Í¬Ê±±£³ÖÔ¶±È TGN ÇáÁ¿£¨ÎŞ memory¡¢ÎŞ attention¡¢
-ÎŞ¶à²ãÏûÏ¢´«µİ£©¡£
+---
 
-### 21.2 ½á¹¹£¨`model/gnn_student.py: LightGNNStudent`£©
+## 22. å®¡æŸ¥ä¸ä¿®æ­£ï¼šé¢å‘å›¾æ— å…³ MLP çš„è’¸é¦ï¼ˆv3ï¼‰
 
-- ¼Ì³Ğ `LightSTMLPStudent`£¬¸´ÓÃ½Úµã±àÂë¡¢Ê±¼ä±àÂë¡¢²Ğ²î¿é¡¢´ò·ÖÍ·Óë¹ØÏµ²Û·ÖÖ§£»
-- ĞÂÔöÒ»¸ö `LastNeighborLoader`£¨´óĞ¡ `--student-neighbors`£©Óë `association` Ó³Éä£»
-- Ã¿¸ö batch£º²éÑ¯ src/candidates µÄ×î½üÁÚ¾Ó ¡ú ¶ÔÁÚ¾Ó½Úµã±àÂë×öÒ»´Î **mean-pooling**
-  £¨`index_add` ÊµÏÖ£¬ÎŞ torch_scatter ÒÀÀµ£©¡ú `neighbor_mlp` ¡ú µÃµ½ÁÚ¾ÓÉÏÏÂÎÄ£»
-- Í¨¹ı³õÊ¼»¯Îª 0 µÄ±êÁ¿ÃÅ¿Ø `neighbor_gate` Óë MLP ±íÊ¾ÈÚºÏ£º
-  `h_v = MLP(features_v) + gate * context_v`£¬Òò´ËÑµÁ·³õÆÚµÈ¼ÛÓÚÔ­ MLP Ñ§Éú£»
-- `update_state(batch)` / `reset_state()` Î¬»¤ÁÚ¾Ó¶ÓÁĞ£¨Óë½ÌÊ¦ÏàÍ¬µÄÏÈ´ò·ÖºóĞ´ÈëË³Ğò£©¡£
+### 22.1 ä¸‰ä¸ªç»„ä»¶çš„å®¡æŸ¥ç»“è®º
 
-### 21.3 ÑµÁ·/ÆÀ²â¼¯³É
+**æ•™å¸ˆï¼ˆ`model/teacher.py`ï¼‰â€”â€”åŸºæœ¬æ— é—®é¢˜ã€‚**
+- `PyGTGNTeacher` = TGNMemory + æ—¶é—´å›¾æ³¨æ„åŠ› + LinkPredictor + å…³ç³»æŠ•å½±å¤´ï¼›
+  å¯é€‰ `relation_align_head` ä½¿ `relation_projector` åœ¨é¢„è®­ç»ƒé˜¶æ®µè·å¾—è‡ªç›‘ç£æ¢¯åº¦ã€‚
+- å®éªŒï¼šé‡è®­å¸¦å…³ç³»å¤´åæ•™å¸ˆ val/test ç”± 0.7167/0.6735 å‡åˆ° 0.7249/0.6805ã€‚
 
-- `train_student_epoch` / `train_supervised_student_epoch`£ºÇ°Ïòºóµ÷ÓÃ `student.update_state`£»
-- `distill_student` / `train_supervised_student`£ºÃ¿¸ö epoch ¿ªÊ¼µ÷ÓÃ `student.reset_state`£»
-- `evaluate_smoke` / `evaluate_tgb` ÒÑÖ§³Ö `update_state`£¬ÑéÖ¤/²âÊÔ´Ó"ÑµÁ·¼¯Ä©Î²"×´Ì¬¼ÌĞøÍÆ½ø£¬
-  Óë½ÌÊ¦µÄ×´Ì¬¹ÜÀíÒ»ÖÂ£»
-- ÎŞ×´Ì¬ MLP Ñ§Éú£¨Ä¬ÈÏ `--student-arch mlp`£©Â·¾¶ÍêÈ«²»±ä¡£
+**å­¦ç”Ÿï¼ˆ`model/student.py`ï¼‰â€”â€”å­˜åœ¨è®¾è®¡ç¼ºå£ã€‚**
+- åŸå›¾æ— å…³ MLP åªè¯» `src/candidates/timestamp`ï¼Œæ²¡æœ‰ä»»ä½•ç»“æ„è¾“å…¥æˆ–è¿‘æœŸæ—¶åºè¾“å…¥ï¼Œ
+  è¿™æ˜¯å®ƒä¿¡æ¯å—é™ã€è’¸é¦æ”¶ç›Šä½çš„æ ¹å› ï¼ˆval 0.4672 / test 0.3833ï¼‰ã€‚
 
-### 21.4 ÔËĞĞ
+**è’¸é¦æ–¹æ³•ï¼ˆ`loss/`ï¼‰â€”â€”å­˜åœ¨ä¸€ä¸ªçœŸå® bugã€‚**
+- å¹´é¾„é”šç‚¹ bugï¼š`anchor_relation_loss` ç”¨åŸå§‹å¹´é¾„åšæœ€è¿‘é‚»ï¼›æ•™å¸ˆå¹´é¾„æŒ‰å…¨å±€æ—¶é—´è·¨åº¦
+  å½’ä¸€åŒ–åè¿‘æœŸå†å²éƒ½ â‰ˆ 0ï¼Œè€Œå­¦ç”Ÿæ§½å¹´é¾„éå¸ƒ [0,1]ï¼Œå¯¼è‡´æ‰€æœ‰æ§½åŒ¹é…åˆ°åŒä¸€ä¸ªæ•™å¸ˆ tokenï¼Œ
+  é”šç‚¹é€€åŒ–ä¸ºå¸¸æ•°ã€‚ä¿®æ­£ä¸ºé€æ ·æœ¬æŠŠä¸¤ä¾§å¹´é¾„å„è‡ªé‡æ ‡å®šåˆ° [0,1]ã€‚
+- å®šä½æ¾„æ¸…ï¼šå…³ç³» token è’¸é¦ï¼ˆAnchor/CUT-FGWï¼‰é€‚åˆç»“æ„åŒ–å­¦ç”Ÿï¼›å¯¹å›¾æ— å…³ MLP ä¼šå¼•å…¥å™ªå£°
+  ï¼ˆå¼ºæƒé‡ä½¿ MLP test ä» 0.3833 æ‰åˆ° 0.3473ï¼‰ã€‚
 
-```bash
-# ÇáÁ¿ GNN Ñ§Éú + Anchor Relation + Structural OT
-python train.py --stage distill --dataset tgbl-wiki \
-  --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
-  --method anchor_ot --student-arch gnn --student-neighbors 8 \
-  --teacher-relation-warmup-epochs 5 \
-  --anchor-weight 0.5 --logit-weight 0.3 --relation-weight 0.5 \
-  --student-seed 42 --output-dir checkpoints/wiki-anchor-ot-gnn-s42
+### 22.2 ç¦»çº¿ç»“æ„/æ—¶åºç‰¹å¾ï¼ˆ`dataset/temporal.py: compute_structure_features`ï¼‰
+
+ä»è®­ç»ƒé›†äº‹ä»¶æµç»Ÿè®¡æ¯èŠ‚ç‚¹ 5 ç»´å¹¶æ ‡å‡†åŒ–ï¼šå‡ºåº¦ã€å…¥åº¦ã€`log1p(å‡º+å…¥)`ã€é¦–æ¬¡å‡ºç°ä½ç½®ã€
+æœ€è¿‘å‡ºç°ä½ç½®ï¼›è®­ç»ƒé›†æœªå‡ºç°çš„èŠ‚ç‚¹ç½® 0ã€‚åªä¾èµ–è®­ç»ƒé›†ï¼ˆæ— æ³„æ¼ï¼‰ï¼Œæ¨ç†æ—¶ä½œä¸ºé™æ€è¾“å…¥ï¼Œ
+ä»å›¾æ— å…³ã€‚é€šè¿‡ `--structure-features` æ‹¼æ¥åˆ°å­¦ç”Ÿè¾“å…¥ã€‚
+
+ä¾æ®ï¼šGLNNï¼ˆ2110.08727ï¼‰ã€InfGraNDï¼ˆ2601.08033ï¼Œä¸€æ¬¡æ€§é¢„è®¡ç®—å¤šè·³ç»“æ„ç‰¹å¾ï¼‰ã€
+L-STEPï¼ˆ2506.08309ï¼Œå¯å­¦ä¹ æ—¶ç©ºä½ç½®ç¼–ç ï¼ŒTGB SOTA MLPï¼‰ã€‚
+
+### 22.3 Anchor Relation å¹´é¾„å½’ä¸€åŒ–ä¿®æ­£ï¼ˆ`loss/kd.py`ï¼‰
+
+```
+t' = (a_T - min_valid a_T) / (max_valid a_T - min_valid a_T)
+s' = (a_S - min a_S) / (max a_S - min a_S)
+distance = | s' - t' |,  j*(k) = argmin
 ```
 
-### 21.5 È¨ºâ
+### 22.4 MLP è’¸é¦æ¨èé…æ–¹
 
-- ¾«¶È£ºÓ¦¸ßÓÚ´¿ MLP Ñ§Éú£¬½Ó½ü½ÌÊ¦£»
-- ËÙ¶È£ºº¬ 1 ÌøÁÚ¾Ó²éÑ¯£¬ÂıÓÚ´¿ MLP£¬µ«Ô¶¿ìÓÚ TGN£¨ÎŞ memory/attention/¶à²ã£©£»
-- ¸ÃÑ§Éú²»ÔÙÊÇ"Í¼ÎŞ¹Ø"£¬ÈôÂÛÎÄÖ÷´ò graph-free ²¿Êğ£¬ĞèÓë MLP Ñ§Éú¶Ô±ÈÈçÊµ±¨¸æÈ¨ºâ¡£
+```
+L = w_taskÂ·CE + w_logitÂ·KL + w_rankÂ·W1        ï¼ˆw_anchor = w_relation = 0ï¼‰
+student input = node_features âŠ• structure_features
+```
+è„šæœ¬ï¼š`train-mlp-kd.sh`ï¼ˆè’¸é¦ï¼‰ã€`train-mlp-struct.sh`ï¼ˆç›‘ç£å¯¹ç…§ï¼‰ï¼›
+ç»“æ„åŒ–å­¦ç”Ÿç»§ç»­ç”¨ `train-anchor.sh`ã€‚
+
+### 22.5 è¾¹ç•Œ
+
+- ç»“æ„ç‰¹å¾ä¸ºè½¬å¯¼å¼ï¼ˆåŸºäºè®­ç»ƒæœŸç»Ÿè®¡ï¼‰ï¼›æ–°èŠ‚ç‚¹å¾—åˆ°ä¸­æ€§ 0ï¼Œå±å¯æ§è¿‘ä¼¼ã€‚
+- éœ€åœ¨æœåŠ¡å™¨ä¸Šç”¨ 3 ä¸ª student seed éªŒè¯ï¼Œå¹¶è¡¥ CPU / å¤§ batch é€Ÿåº¦å£å¾„ã€‚
+

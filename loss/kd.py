@@ -105,8 +105,42 @@ def anchor_relation_loss(
     valid_rows = teacher_mask.any(dim=-1)
     if not bool(valid_rows.any()):
         return student_tokens.sum() * 0.0
+    # 教师年龄按全局时间跨度归一化后可能非常小（近期历史都接近 0），学生槽年龄却
+    # 遍布 [0,1]。必须逐样本把两侧年龄各自重标定到 [0,1]，否则所有学生槽会匹配到
+    # 同一个（最近的）教师 token，锚点匹配退化为常数。
+    positive_inf = torch.full(
+        (),
+        float("inf"),
+        device=teacher_ages.device,
+        dtype=teacher_ages.dtype,
+    )
+    negative_inf = torch.full(
+        (),
+        float("-inf"),
+        device=teacher_ages.device,
+        dtype=teacher_ages.dtype,
+    )
+    teacher_min = torch.where(
+        teacher_mask, teacher_ages, positive_inf
+    ).amin(dim=-1, keepdim=True)
+    teacher_max = torch.where(
+        teacher_mask, teacher_ages, negative_inf
+    ).amax(dim=-1, keepdim=True)
+    teacher_norm = (teacher_ages - teacher_min) / (
+        teacher_max - teacher_min
+    ).clamp_min(1.0e-6)
+    teacher_norm = torch.where(
+        teacher_mask,
+        teacher_norm,
+        torch.zeros_like(teacher_norm),
+    )
+    student_min = student_ages.amin(dim=-1, keepdim=True)
+    student_max = student_ages.amax(dim=-1, keepdim=True)
+    student_norm = (student_ages - student_min) / (
+        student_max - student_min
+    ).clamp_min(1.0e-6)
     # 年龄差的绝对值作为匹配代价，无效 teacher token 置为极大值后取最近邻。
-    distance = (student_ages.unsqueeze(-1) - teacher_ages.unsqueeze(1)).abs()
+    distance = (student_norm.unsqueeze(-1) - teacher_norm.unsqueeze(1)).abs()
     negative_large = torch.full(
         (),
         1.0e9,

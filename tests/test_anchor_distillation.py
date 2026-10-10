@@ -160,6 +160,34 @@ def test_anchor_objective_backpropagates_through_cutfgw_and_anchor() -> None:
     assert float(parts["anchor"]) > 0.0
 
 
+def test_anchor_relation_loss_is_invariant_to_teacher_age_scaling() -> None:
+    student_tokens = torch.randn(2, 3, 4, requires_grad=True)
+    student_ages = torch.tensor([[1.0, 0.4, 0.0], [1.0, 0.4, 0.0]])
+    teacher_tokens = torch.randn(2, 4, 4)
+    teacher_ages = torch.tensor(
+        [[0.005, 0.002, 0.001, 0.0], [0.005, 0.002, 0.001, 0.0]]
+    )
+    teacher_mask = torch.ones(2, 4, dtype=torch.bool)
+
+    base = anchor_relation_loss(
+        student_tokens,
+        student_ages,
+        teacher_tokens,
+        teacher_ages,
+        teacher_mask,
+    )
+    rescaled = anchor_relation_loss(
+        student_tokens,
+        student_ages,
+        teacher_tokens,
+        teacher_ages * 1000.0 + 5.0,
+        teacher_mask,
+    )
+
+    # 年龄锚点应按样本重标定，对教师年龄的仿射缩放不敏感。
+    assert torch.allclose(base, rescaled, atol=1.0e-5)
+
+
 def test_relation_outputs_are_age_ordered_after_vectorization() -> None:
     teacher = PyGTGNTeacher(
         event_times=torch.tensor([10, 20, 30, 40], dtype=torch.long),
