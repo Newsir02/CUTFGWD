@@ -28,7 +28,6 @@ class PyGTGNTeacher(nn.Module):
         temporal_neighbors: int = 24,
         dropout: float = 0.1,
         teacher_layers: int = 1,
-        relation_align: bool = False,
     ) -> None:
         super().__init__()
         event_times = torch.as_tensor(event_times, dtype=torch.long).flatten()
@@ -70,7 +69,6 @@ class PyGTGNTeacher(nn.Module):
             "temporal_neighbors": temporal_neighbors,
             "teacher_layers": teacher_layers,
             "dropout": dropout,
-            "relation_align": bool(relation_align),
         }
 
         self.register_buffer(
@@ -128,11 +126,9 @@ class PyGTGNTeacher(nn.Module):
             nn.ReLU(),
             nn.Linear(relation_dim, relation_dim),
         )
-        # 可选关系对齐头：教师预训练时把池化关系表示映射回打分空间，
-        # 从而让 relation_projector 真正获得任务相关梯度。baseline 默认关闭。
-        self.relation_align = bool(relation_align)
-        if self.relation_align:
-            self.relation_align_head = nn.Linear(relation_dim, hidden_dim)
+        # 关系对齐头：教师预训练时把池化关系表示映射回打分空间，
+        # 从而让 relation_projector 真正获得任务相关梯度。
+        self.relation_align_head = nn.Linear(relation_dim, hidden_dim)
         self.neighbor_loader = LastNeighborLoader(
             num_nodes,
             size=temporal_neighbors,

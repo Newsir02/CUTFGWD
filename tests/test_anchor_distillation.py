@@ -239,7 +239,6 @@ def test_teacher_relation_auxiliary_loss_trains_align_head() -> None:
         relation_dim=6,
         temporal_neighbors=3,
         dropout=0.0,
-        relation_align=True,
     ).eval()
 
     teacher.update_state(make_event_batch())
@@ -281,7 +280,6 @@ def test_teacher_epoch_with_relation_auxiliary_runs() -> None:
         relation_dim=8,
         temporal_neighbors=3,
         dropout=0.0,
-        relation_align=True,
     )
     optimizer = torch.optim.Adam(teacher.parameters(), lr=1.0e-3)
 

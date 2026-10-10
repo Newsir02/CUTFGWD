@@ -24,7 +24,6 @@ def rank_wasserstein_loss(
     student_logits: Tensor,
     teacher_logits: Tensor,
     temperature: float = 1.0,
-    top_weighted: bool = True,
 ) -> Tensor:
     """One-dimensional W1 distance on teacher-ordered candidate identities.
 
@@ -43,17 +42,16 @@ def rank_wasserstein_loss(
 
     # 对一维有序支撑上的分布，W1 等价于 CDF 差值的 L1 距离；最后一个 CDF 恒为 1。
     cdf_difference = torch.cumsum(teacher_ordered - student_ordered, dim=-1)[..., :-1].abs()
-    if top_weighted:
-        # 排名靠前的候选对推荐质量更重要，因此给前部 CDF 更高权重。
-        positions = torch.arange(
-            2,
-            student_logits.size(-1) + 1,
-            device=student_logits.device,
-            dtype=student_logits.dtype,
-        )
-        weights = 1.0 / torch.log2(positions + 1.0)
-        weights = weights / weights.mean().clamp_min(1.0e-8)
-        cdf_difference = cdf_difference * weights
+    # 排名靠前的候选对推荐质量更重要，因此给前部 CDF 更高权重。
+    positions = torch.arange(
+        2,
+        student_logits.size(-1) + 1,
+        device=student_logits.device,
+        dtype=student_logits.dtype,
+    )
+    weights = 1.0 / torch.log2(positions + 1.0)
+    weights = weights / weights.mean().clamp_min(1.0e-8)
+    cdf_difference = cdf_difference * weights
     return cdf_difference.mean()
 
 

@@ -27,15 +27,19 @@
 | 学生 A | `LightSTMLPStudent` | **图无关 MLP**：只读节点特征、节点 ID、查询时间；含固定关系槽 |
 | 学生 B | `LightGNNStudent` | 在 MLP 学生上加**一层邻居 mean-pooling**（无 memory、无 attention、无多层消息传递） |
 
-### 2.2 教师关系头（先修）
+### 2.2 教师关系头（固定组件）
 
-教师原本只用预测损失训练，`relation_projector` 从未获得梯度（是随机的）。本项目：
+教师只用预测损失训练时，`relation_projector` 从未获得梯度（是随机的）。因此教师
+**始终带关系对齐头** `relation_align_head`（不再有无关系头的变体）：
 
-- 教师预训练时可选地请求关系输出，并用**自监督对齐**训练关系头：
+- 教师预训练时请求关系输出，并用**自监督对齐**训练关系投影/对齐头：
   `L_align = 1 - cos(A(pool(z_T)), sg(h_s)) + ||A(pool(z_T)) - sg(h_s)||²`，
   其中 `z_T` 为历史关系 token，`h_s` 为打分用的源节点嵌入，`sg` 为 stop-gradient。
-- 对已有（无关系头）的教师 checkpoint，提供 **关系头热启动**（冻结主干、只训练关系头）：
-  `--teacher-relation-warmup-epochs N`，无需重训整个教师。
+- `--teacher-relation-weight` 控制该辅助项权重（`baseline` 默认 0，即只保留随机初始化
+  的关系头、不训练它；`anchor_ot` 默认 1）。
+- 关系头不参与教师打分路径，因此是否训练它**不改变教师预测**。
+
+> 注意：旧的无关系头 checkpoint 已不再兼容，改用重新训练（带关系头）的 `teacher.pt`。
 
 ### 2.3 三条蒸馏信号
 
@@ -148,22 +152,21 @@ python train.py --stage distill --dataset tgbl-wiki \
 ### 5.3 新方法（Anchor Relation + Structural OT）
 
 ```bash
-# 方式一：旧教师 + 关系头热启动（省时）
+# 训练带关系头的教师（教师始终带关系头）
+bash train-tgn.sh --method anchor_ot
+
+# 重用该教师做 Anchor Relation + Structural OT 蒸馏
 python train.py --stage distill --dataset tgbl-wiki \
   --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
-  --method anchor_ot --teacher-relation-warmup-epochs 5 \
+  --method anchor_ot --teacher-relation-weight 1.0 \
   --anchor-weight 0.5 --logit-weight 0.3 --relation-weight 0.5 \
   --sinkhorn-iterations 10 --fgw-iterations 2 \
   --student-seed 42 --output-dir checkpoints/wiki-anchor-ot-s42
-
-# 方式二：重训带关系头的教师
-bash train-tgn.sh --method anchor_ot
 
 # 轻量 GNN 学生
 python train.py --stage distill --dataset tgbl-wiki \
   --teacher-checkpoint checkpoints/wiki-tgn/teacher.pt \
   --method anchor_ot --student-arch gnn --student-neighbors 8 \
-  --teacher-relation-warmup-epochs 5 \
   --output-dir checkpoints/wiki-anchor-ot-gnn-s42
 ```
 
@@ -173,8 +176,7 @@ python train.py --stage distill --dataset tgbl-wiki \
 |---|---|
 | `--method {baseline,anchor_ot}` | 方法切换；`baseline` 与旧行为一致 |
 | `--student-arch {mlp,gnn}` | 学生架构：图无关 MLP / 轻量 1 层 GNN |
-| `--teacher-relation-weight` | 教师关系头自监督权重（`>0` 才构建关系对齐头） |
-| `--teacher-relation-warmup-epochs` | 对旧 checkpoint 做关系头热启动的 epoch 数 |
+| `--teacher-relation-weight` | 教师关系头自监督权重（`baseline` 默认 0，`anchor_ot` 默认 1） |
 | `--anchor-weight` | Anchor Relation 蒸馏权重 |
 | `--relation-weight` | Structural OT（CUT-FGW）权重 |
 | `--logit-weight` / `--rank-weight` | 预测蒸馏 / 排序关系蒸馏权重 |
@@ -214,7 +216,7 @@ python -m pytest tests -q
 
 ### 9.1 审查结论
 
-- **教师**：TGN + 可选关系头，工作正常。重训带关系头后教师略升
+- **教师**：TGN + 关系头，工作正常。重训带关系头后教师略升
   （val/test：0.7167/0.6735 → **0.7249/0.6805**），关系头可作为辅助/正则。
 - **学生**：原图无关 MLP **只读节点特征 + 节点 ID + 全局时间**，没有任何结构或
   近期时序输入——这是它"结构感知缺失、蒸馏难提升"的根因。
@@ -257,3 +259,17 @@ python train.py --stage distill --dataset tgbl-wiki \
 - PGKD：Edge-free but Structure-aware（arXiv:2303.13763）
 - InfGraND：Influence-Guided GNN-to-MLP KD（arXiv:2601.08033）
 - L-STEP：Learnable Spatial-Temporal Positional Encoding（arXiv:2506.08309）
+
+---
+
+## 10. 代码清理（v4）
+
+- **教师统一为带关系头的变体**：删除 `PyGTGNTeacher(relation_align=...)` 开关，
+  `relation_align_head` 始终构建；删除仅供“旧无关系头 checkpoint”使用的
+  `--teacher-relation-warmup-epochs`、`warmup_teacher_relation` 与
+  `load_teacher_from_checkpoint(allow_missing_relation_align=...)` 兼容分支。
+- **删除死代码**：`util/metrics.py: ranking_metrics`；`util/__init__.py` 中未使用的
+  `count_trainable_parameters` / `count_all_parameters` / `count_runtime_state_elements`
+  再导出；`loss/kd.py: rank_wasserstein_loss` 恒不使用的 `top_weighted` 形参。
+- 行为不变：关系头不参与教师打分路径，因此删除开关不影响 `baseline` 的教师预测；
+  `--method baseline`、轻量 GNN 学生、结构特征均保留。

@@ -57,9 +57,9 @@
 - `LinkPredictor`：`source_embedding` 与 `candidate_embedding` → 候选 logits。
 - `relation_projector`：把 `[neighbor_memory || edge_attributes]` 投影为 `relation_dim`
   的历史关系 token。
-- **新增（可选）`relation_align_head`**：`Linear(relation_dim -> hidden_dim)`。仅当
-  `--teacher-relation-weight > 0` 时构建，用于教师预训练阶段的自监督关系对齐。baseline
-  默认不构建，因此旧 checkpoint 完全兼容。
+- **`relation_align_head`（固定组件）**：`Linear(relation_dim -> hidden_dim)`，始终构建，
+  用于教师预训练阶段的自监督关系对齐。`--teacher-relation-weight` 只控制该辅助项权重
+  （`baseline` 默认 0，即不训练该头），且该头**不参与打分路径**。
 
 教师在 `score_candidates(..., return_relations=True)` 时额外返回 `source_embedding`
 （打分用的源节点嵌入），仅用于关系头自监督，不影响打分路径。
@@ -276,7 +276,7 @@ L_align = mean_{有效行} [ 1 - cos( A(mean_j z^T_j), sg(h_s) )
    memory + temporal attention           node feat + id + time
    + LinkPredictor                       + residual MLP + score_head
    + relation_projector                  + relation slots
-   (relation_align_head)                      │
+   relation_align_head                        │
         │                                     │
    logits_T[B,C]                          logits_S[B,C]
    relation_tokens_T[B,N,rd]              relation_tokens_S[B,R,rd]
@@ -361,8 +361,8 @@ python train.py --stage distill --dataset tgbl-wiki \
 
 ### 20.3 工程修复
 
-- `--teacher-relation-warmup-epochs N`：加载旧 checkpoint（无关系头）时冻结主干、仅用
-  `L_align` 快速训练关系头，无需重训教师。
+- （v4 已删除）`--teacher-relation-warmup-epochs`：曾用于给旧的无关系头 checkpoint 热启动
+  关系头；因教师现在始终带关系头，该路径已移除。
 - 加载教师时若 CLI 的 `--teacher-hidden/--teacher-layers` 与 checkpoint 不一致会告警。
 - `association` 缓冲区由 `torch.empty` 改为 `-1` 哨兵，消除未初始化值越界。
 
@@ -384,7 +384,7 @@ python train.py --stage distill --dataset tgbl-wiki \
 
 **教师（`model/teacher.py`）——基本无问题。**
 - `PyGTGNTeacher` = TGNMemory + 时间图注意力 + LinkPredictor + 关系投影头；
-  可选 `relation_align_head` 使 `relation_projector` 在预训练阶段获得自监督梯度。
+  固定 `relation_align_head` 使 `relation_projector` 在预训练阶段获得自监督梯度。
 - 实验：重训带关系头后教师 val/test 由 0.7167/0.6735 升到 0.7249/0.6805。
 
 **学生（`model/student.py`）——存在设计缺口。**
@@ -428,4 +428,33 @@ student input = node_features ⊕ structure_features
 
 - 结构特征为转导式（基于训练期统计）；新节点得到中性 0，属可控近似。
 - 需在服务器上用 3 个 student seed 验证，并补 CPU / 大 batch 速度口径。
+
+---
+
+## 23. 代码清理（v4）
+
+### 23.1 教师统一为带关系头
+
+- `PyGTGNTeacher` 删除 `relation_align` 形参，`relation_align_head` **始终构建**，
+  `model_config` 不再写 `relation_align` 字段。
+- 删除 `train.py: warmup_teacher_relation`、`--teacher-relation-warmup-epochs` 参数及校验、
+  `load_teacher_from_checkpoint(allow_missing_relation_align=...)` 兼容分支；加载教师改为
+  始终 `strict=True`。
+- 影响：`train_teacher_epoch` 的 `use_relations` 仅由 `relation_aux_weight > 0` 决定；
+  旧的无关系头 checkpoint 不再兼容（需用带关系头的 `teacher.pt`）。
+- 因为关系头**不进入打分路径**，`baseline` 教师的 logits/指标不受影响。
+
+### 23.2 删除的死代码
+
+- `util/metrics.py: ranking_metrics`（无调用方）。
+- `util/__init__.py` 中 `count_trainable_parameters` / `count_all_parameters` /
+  `count_runtime_state_elements` 的**再导出**（仅在 `model_parameter_summary` 内部使用，
+  函数本身保留）。
+- `loss/kd.py: rank_wasserstein_loss` 的 `top_weighted` 形参（无调用方传入 `False`），
+  其加权逻辑内联保留。
+
+### 23.3 保留
+
+- `--method baseline`（KD-only 对照）、`LightGNNStudent`（`--student-arch gnn`）、
+  `--structure-features` 与配套脚本/测试均保留。
 

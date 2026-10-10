@@ -134,11 +134,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--fgw-iterations", type=int, default=4)
     parser.add_argument("--sinkhorn-iterations", type=int, default=20)
 
-    parser.add_argument(
-        "--teacher-relation-warmup-epochs",
-        type=int,
-        default=0,
-    )
     parser.add_argument("--teacher-checkpoint", type=str, default="")
     parser.add_argument("--output-dir", type=str, default="checkpoints")
     parser.add_argument("--latency-batches", type=int, default=20)
@@ -173,10 +168,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("num-candidates must be at least 2.")
     if args.patience < 0:
         raise ValueError("patience must be non-negative.")
-    if args.teacher_relation_warmup_epochs < 0:
-        raise ValueError(
-            "teacher-relation-warmup-epochs must be non-negative."
-        )
     if args.student_neighbors <= 0:
         raise ValueError("student-neighbors must be positive.")
     if args.teacher_hidden % 2 != 0:
@@ -345,7 +336,6 @@ def build_teacher(
         temporal_neighbors=args.temporal_neighbors,
         dropout=args.dropout,
         teacher_layers=args.teacher_layers,
-        relation_align=float(args.teacher_relation_weight or 0.0) > 0.0,
     )
 
 
@@ -394,7 +384,6 @@ def load_teacher_from_checkpoint(
     bundle: TemporalGraphBundle,
     data_signature: str,
     device: torch.device,
-    allow_missing_relation_align: bool = False,
 ) -> PyGTGNTeacher:
     expected_config = {
         "num_nodes": int(bundle.node_features.size(0)),
@@ -420,10 +409,6 @@ def load_teacher_from_checkpoint(
         raise ValueError(
             "Teacher checkpoint config is missing: " + ", ".join(missing)
         )
-    relation_align = bool(config.get("relation_align", False))
-    if allow_missing_relation_align:
-        # 旧 checkpoint 没有关系对齐头；允许新建该头并只做关系头热启动。
-        relation_align = True
     teacher = PyGTGNTeacher(
         event_times=bundle.data.t,
         event_messages=bundle.data.msg,
@@ -434,31 +419,14 @@ def load_teacher_from_checkpoint(
         temporal_neighbors=int(config["temporal_neighbors"]),
         dropout=float(config["dropout"]),
         teacher_layers=int(config.get("teacher_layers", 1)),
-        relation_align=relation_align,
     ).to(device)
     state = payload["model"]
-    if allow_missing_relation_align and not bool(
-        config.get("relation_align", False)
-    ):
-        incompatible = teacher.load_state_dict(state, strict=False)
-        unexpected = list(incompatible.unexpected_keys)
-        missing = [
-            name
-            for name in incompatible.missing_keys
-            if not name.startswith("relation_align_head")
-        ]
-        if missing or unexpected:
-            raise ValueError(
-                "Teacher checkpoint parameters are incompatible: "
-                f"missing={missing}, unexpected={unexpected}."
-            )
-    else:
-        try:
-            teacher.load_state_dict(state, strict=True)
-        except RuntimeError as exc:
-            raise ValueError(
-                f"Teacher checkpoint parameters are incompatible: {exc}"
-            ) from exc
+    try:
+        teacher.load_state_dict(state, strict=True)
+    except RuntimeError as exc:
+        raise ValueError(
+            f"Teacher checkpoint parameters are incompatible: {exc}"
+        ) from exc
     teacher.reset_state()
     return teacher
 
@@ -566,10 +534,8 @@ def train_teacher_epoch(
 ) -> float:
     teacher.train()
     teacher.reset_state()
-    # 只有构建了关系对齐头且权重非零时才请求关系输出与计算辅助损失。
-    use_relations = relation_aux_weight > 0.0 and bool(
-        getattr(teacher, "relation_align", False)
-    )
+    # 关系对齐头始终存在；仅当辅助权重非零时才请求关系输出并计算辅助损失。
+    use_relations = relation_aux_weight > 0.0
     meter = AverageMeter()
     for raw_batch in loader:
         batch = move_to_device(raw_batch, device)
@@ -702,65 +668,6 @@ def pretrain_teacher(
     teacher.load_state_dict(best_state, strict=True)
     teacher.reset_state()
     return best_state
-
-
-def warmup_teacher_relation(
-    teacher: PyGTGNTeacher,
-    loader: CandidateBatchLoader,
-    args: argparse.Namespace,
-    device: torch.device,
-) -> None:
-    """冻结主干，仅用自监督对齐快速训练关系投影头。"""
-
-    if not bool(getattr(teacher, "relation_align", False)):
-        raise ValueError(
-            "Teacher relation warmup requires a relation alignment head."
-        )
-    parameters = list(teacher.relation_projector.parameters()) + list(
-        teacher.relation_align_head.parameters()
-    )
-    for parameter in teacher.parameters():
-        parameter.requires_grad_(False)
-    for parameter in parameters:
-        parameter.requires_grad_(True)
-    optimizer = torch.optim.AdamW(
-        parameters,
-        lr=args.teacher_lr,
-        weight_decay=args.weight_decay,
-    )
-    teacher.eval()
-    for epoch in range(1, args.teacher_relation_warmup_epochs + 1):
-        teacher.reset_state()
-        meter = AverageMeter()
-        for raw_batch in loader:
-            batch = move_to_device(raw_batch, device)
-            optimizer.zero_grad(set_to_none=True)
-            output = teacher.score_candidates(batch, return_relations=True)
-            teacher.update_state(batch)
-            pooled = masked_relation_mean(
-                output["relation_tokens"],
-                output["relation_mask"],
-            )
-            projected = teacher.relation_align_head(pooled)
-            valid_rows = output["relation_mask"].any(dim=-1)
-            loss = relation_alignment_loss(
-                projected,
-                output["source_embedding"],
-                valid_rows,
-            )
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(parameters, args.grad_clip)
-            optimizer.step()
-            teacher.detach_state()
-            meter.update(float(loss.detach()), int(batch["target"].numel()))
-        print(
-            f"Teacher relation warmup {epoch:02d}/"
-            f"{args.teacher_relation_warmup_epochs:02d} "
-            f"align_loss={meter.average:.4f}"
-        )
-    for parameter in teacher.parameters():
-        parameter.requires_grad_(True)
-    teacher.reset_state()
 
 
 def train_student_epoch(
@@ -1080,9 +987,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             bundle,
             data_signature,
             device,
-            allow_missing_relation_align=(
-                args.teacher_relation_warmup_epochs > 0
-            ),
         )
         print(f"Loaded teacher checkpoint: {args.teacher_checkpoint}")
         if (
@@ -1105,8 +1009,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 "Student relation_dim must match the teacher relation_dim: "
                 f"got {args.relation_dim}, expected {teacher.relation_dim}."
             )
-        if args.teacher_relation_warmup_epochs > 0:
-            warmup_teacher_relation(teacher, train_loader, args, device)
         # 学生独立种子：不影响已构造的数据/教师，仅控制学生初始化与 dropout。
         seed_everything(int(args.student_seed))
         freeze_teacher(teacher)

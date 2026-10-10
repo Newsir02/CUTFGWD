@@ -6,19 +6,6 @@ import torch
 from torch import Tensor
 
 
-@torch.no_grad()
-def ranking_metrics(logits: Tensor, target: Tensor) -> Dict[str, float]:
-    # 将候选按 logit 从高到低排序，再找到真实目标所在排名。
-    order = torch.argsort(logits, dim=-1, descending=True)
-    ranks = (order == target.unsqueeze(-1)).nonzero(as_tuple=False)[:, 1] + 1
-    ranks = ranks.float()
-    return {
-        "mrr": float((1.0 / ranks).mean()),
-        "hits@1": float((ranks <= 1).float().mean()),
-        "hits@3": float((ranks <= 3).float().mean()),
-    }
-
-
 class RankingMetricAccumulator:
     def __init__(self) -> None:
         # 累计 sum 后统一除以样本数，适合跨多个 batch 计算整体指标。

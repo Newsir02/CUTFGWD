@@ -61,6 +61,8 @@ def test_teacher_uses_pyg_tgn_components() -> None:
     assert isinstance(teacher.memory, TGNMemory)
     assert isinstance(teacher.neighbor_loader, LastNeighborLoader)
     assert isinstance(teacher.gnn.conv, TransformerConv)
+    # 教师始终带关系对齐头。
+    assert isinstance(teacher.relation_align_head, torch.nn.Linear)
 
 
 def test_teacher_can_stack_multiple_transformer_layers() -> None:
