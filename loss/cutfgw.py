@@ -99,6 +99,8 @@ class CausalUnbalancedTemporalFGW(nn.Module):
         # 非平衡 Sinkhorn：允许边际质量轻微偏离，适配 teacher 变长历史和 student 固定槽。
         exponent = self.marginal_relaxation / (self.marginal_relaxation + self.entropy)
         support = prior > 0.0
+        # 固定掩码在迭代前算一次，避免在内层循环里重复比较。
+        teacher_pos = teacher_mass > 0.0
         negative_large = torch.full((), -1.0e4, device=cost.device, dtype=cost.dtype)
         log_prior = torch.where(
             support,
@@ -107,7 +109,7 @@ class CausalUnbalancedTemporalFGW(nn.Module):
         )
         log_kernel = log_prior - cost / self.entropy
         log_teacher_mass = torch.where(
-            teacher_mass > 0.0,
+            teacher_pos,
             teacher_mass.clamp_min(1.0e-30).log(),
             negative_large,
         )
@@ -121,11 +123,7 @@ class CausalUnbalancedTemporalFGW(nn.Module):
                 log_kernel + log_right.unsqueeze(-2), dim=-1
             )
             proposed_left = exponent * (log_teacher_mass - left_normalizer)
-            log_left = torch.where(
-                teacher_mass > 0.0,
-                proposed_left,
-                negative_large,
-            )
+            log_left = torch.where(teacher_pos, proposed_left, negative_large)
             right_normalizer = torch.logsumexp(
                 log_kernel + log_left.unsqueeze(-1), dim=-2
             )

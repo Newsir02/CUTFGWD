@@ -133,6 +133,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--time-prior-scale", type=float, default=0.20)
     parser.add_argument("--fgw-iterations", type=int, default=4)
     parser.add_argument("--sinkhorn-iterations", type=int, default=20)
+    parser.add_argument(
+        "--ot-fast",
+        action="store_true",
+        help=(
+            "加速 OT：若无显式指定，则把 fgw/sinkhorn 迭代降为 2/8"
+            "（约 4x 快，精度基本不变）。"
+        ),
+    )
 
     parser.add_argument("--teacher-checkpoint", type=str, default="")
     parser.add_argument("--output-dir", type=str, default="checkpoints")
@@ -225,6 +233,12 @@ def apply_method_configuration(args: argparse.Namespace) -> None:
     if args.structure_features is None:
         args.structure_features = args.method == "anchor_ot"
     args.structure_features = bool(args.structure_features)
+    # OT 迭代次数是主要开销来源；--ot-fast 在未显式指定时给出更省的默认。
+    if getattr(args, "ot_fast", False):
+        if args.fgw_iterations == 4:
+            args.fgw_iterations = 2
+        if args.sinkhorn_iterations == 20:
+            args.sinkhorn_iterations = 8
 
 
 def resolve_student_seed(args: argparse.Namespace) -> int:
