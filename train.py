@@ -137,6 +137,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--teacher-checkpoint", type=str, default="")
     parser.add_argument("--output-dir", type=str, default="checkpoints")
     parser.add_argument("--latency-batches", type=int, default=20)
+    parser.add_argument(
+        "--eval-max-events",
+        type=int,
+        default=0,
+        help=(
+            "开发期加速：官方评测时 val 只用前 N 个事件（0=全量）。"
+            "test 始终全量，不影响最终报告。"
+        ),
+    )
     args = parser.parse_args(argv)
     args.student_layers = args.student_blocks
     return args
@@ -168,6 +177,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("num-candidates must be at least 2.")
     if args.patience < 0:
         raise ValueError("patience must be non-negative.")
+    if args.eval_max_events < 0:
+        raise ValueError("eval-max-events must be non-negative.")
     if args.student_neighbors <= 0:
         raise ValueError("student-neighbors must be positive.")
     if args.teacher_hidden % 2 != 0:
@@ -478,12 +489,17 @@ def evaluate_split(
     if bundle.official_evaluation:
         if split not in {"val", "test"}:
             raise ValueError("Official evaluation supports val or test only.")
+        # --eval-max-events 只用于加速开发期的 val 选择；test 始终全量。
+        max_events = (
+            int(getattr(args, "eval_max_events", 0)) if split == "val" else 0
+        )
         return evaluate_tgb(
             model,
             bundle,
             split,
             args.batch_size,
             device,
+            max_events=max_events,
         )
     return evaluate_smoke(model, loader, device)
 

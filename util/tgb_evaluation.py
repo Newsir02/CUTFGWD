@@ -70,6 +70,7 @@ def evaluate_tgb(
     split: EvaluationSplit,
     batch_size: int,
     device: torch.device,
+    max_events: int = 0,
 ) -> dict[str, object]:
     """使用 TGB 官方历史负样本执行 one-vs-many 动态链路评测。"""
 
@@ -95,7 +96,11 @@ def evaluate_tgb(
     sampler = backend.negative_sampler
     metric = str(backend.eval_metric)
     evaluator = Evaluator(name=bundle.dataset_name)
-    loader = TemporalDataLoader(bundle.split(split), batch_size=batch_size)
+    data = bundle.split(split)
+    if max_events > 0 and int(data.num_events) > max_events:
+        # 仅取前 max_events 个事件做（开发期）快速 val 选择。
+        data = data[:max_events]
+    loader = TemporalDataLoader(data, batch_size=batch_size)
     model.eval()
     values: list[float] = []
     update_state = getattr(model, "update_state", None)

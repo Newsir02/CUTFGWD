@@ -1,46 +1,49 @@
 #!/usr/bin/env bash
-# Ablation ladder for the graph-free MLP student on tgbl-wiki.
-# Run inside the repo with the training env already active.
-#   bash run-ablation-mlp.sh
-# Outputs per-run logs and checkpoints under $OUT (default experiments/abl_mlp).
-
+# Sharded ablation ladder for the graph-free MLP student on tgbl-wiki.
+# Meant to be launched in parallel across GPUs, e.g.:
+#   SHARD=0 NSHARD=2 CUDA_VISIBLE_DEVICES=0 bash run-ablation-mlp.sh
+#   SHARD=1 NSHARD=2 CUDA_VISIBLE_DEVICES=1 bash run-ablation-mlp.sh
+# Env knobs: OUT SEED TEACHER EVAL_MAX EPOCHS PATIENCE SHARD NSHARD
 OUT="${OUT:-experiments/abl_mlp}"
 SEED="${SEED:-42}"
 TEACHER="${TEACHER:-checkpoints/wiki-tgn/teacher.pt}"
+EVAL_MAX="${EVAL_MAX:-4000}"
+EPOCHS="${EPOCHS:-30}"
+PATIENCE="${PATIENCE:-6}"
+SHARD="${SHARD:-0}"
+NSHARD="${NSHARD:-1}"
 mkdir -p "$OUT"
 
-DISTILL_COMMON="--dataset tgbl-wiki --teacher-checkpoint $TEACHER --method anchor_ot --student-arch mlp --student-seed $SEED"
+# name | kind(student|distill) | extra args
+jobs=(
+  "sup_no_feat|student|"
+  "sup_feat|student|--structure-features"
+  "kd_lr|distill|--logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.0 --relation-weight 0.0 --diversity-weight 0.0"
+  "kd_r|distill|--logit-weight 0.0 --rank-weight 0.0 --anchor-weight 0.0 --relation-weight 1.0 --diversity-weight 0.0"
+  "kd_lr_r|distill|--logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.0 --relation-weight 1.0 --diversity-weight 0.0"
+  "kd_lr_a|distill|--logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.5 --relation-weight 0.0 --diversity-weight 0.0"
+  "kd_lr_ar|distill|--logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.5 --relation-weight 1.0 --diversity-weight 0.0"
+  "kd_lr_ard|distill|--logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.5 --relation-weight 1.0 --diversity-weight 0.01"
+)
 
-sup () {
-  name=$1; shift
-  echo "=== RUN $name ==="
-  python train.py --stage student --dataset tgbl-wiki --student-seed "$SEED" \
-    --output-dir "$OUT/$name" "$@" > "$OUT/$name.log" 2>&1
+idx=-1
+for job in "${jobs[@]}"; do
+  idx=$((idx + 1))
+  if [ $((idx % NSHARD)) -ne "$SHARD" ]; then continue; fi
+  IFS='|' read -r name kind extra <<< "$job"
+  echo "=== RUN $name (shard $SHARD) ==="
+  if [ "$kind" = "student" ]; then
+    python train.py --stage student --dataset tgbl-wiki --student-seed "$SEED" \
+      --student-epochs "$EPOCHS" --patience "$PATIENCE" --eval-max-events "$EVAL_MAX" \
+      --output-dir "$OUT/$name" $extra > "$OUT/$name.log" 2>&1
+  else
+    python train.py --stage distill --dataset tgbl-wiki \
+      --teacher-checkpoint "$TEACHER" --method anchor_ot --student-arch mlp \
+      --student-seed "$SEED" --student-epochs "$EPOCHS" --patience "$PATIENCE" \
+      --eval-max-events "$EVAL_MAX" \
+      --output-dir "$OUT/$name" $extra > "$OUT/$name.log" 2>&1
+  fi
   echo "=== DONE $name exit=$? ==="
-}
-
-kd () {
-  name=$1; shift
-  echo "=== RUN $name ==="
-  python train.py --stage distill $DISTILL_COMMON --output-dir "$OUT/$name" "$@" \
-    > "$OUT/$name.log" 2>&1
-  echo "=== DONE $name exit=$? ==="
-}
-
-# --- supervised baselines (no teacher) ---
-sup sup_no_feat
-sup sup_feat --structure-features
-
-# --- distillation ladder: prediction KD, then add OT-related terms one by one ---
-kd kd_lr      --logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.0 --relation-weight 0.0 --diversity-weight 0.0
-kd kd_r       --logit-weight 0.0 --rank-weight 0.0 --anchor-weight 0.0 --relation-weight 1.0 --diversity-weight 0.0
-kd kd_lr_r    --logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.0 --relation-weight 1.0 --diversity-weight 0.0
-kd kd_lr_a    --logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.5 --relation-weight 0.0 --diversity-weight 0.0
-kd kd_lr_ar   --logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.5 --relation-weight 1.0 --diversity-weight 0.0
-kd kd_lr_ard  --logit-weight 0.5 --rank-weight 0.5 --anchor-weight 0.5 --relation-weight 1.0 --diversity-weight 0.01
-
-echo "================ SUMMARY ================"
-for f in "$OUT"/*.log; do
-  printf "%-14s " "$(basename "$f" .log)"
-  grep -E "Student test|Supervised student test" "$f" | tail -1
 done
+echo "=== SHARD $SHARD COMPLETE ==="
+grep -H -E "Student test|Supervised student test" "$OUT"/*.log 2>/dev/null
