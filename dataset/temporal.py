@@ -122,6 +122,7 @@ def compute_structure_features(
 
     if feature_set not in {"basic", "rich"}:
         raise ValueError("feature_set must be 'basic' or 'rich'.")
+    # 只返回手工特征部分；邻居聚合特征由 build_temporal_graph_bundle 另行拼接。
     src = torch.as_tensor(src, dtype=torch.long).flatten()
     dst = torch.as_tensor(dst, dtype=torch.long).flatten()
     train_mask = torch.as_tensor(train_mask, dtype=torch.bool).flatten()
@@ -236,6 +237,41 @@ def compute_structure_features(
     return standardized.contiguous()
 
 
+def compute_neighbor_feature_mean(
+    node_features: Tensor,
+    src: Tensor,
+    dst: Tensor,
+    train_mask: Tensor,
+    num_rows: int,
+) -> Tensor:
+    """预计算的无向 1 跳邻居特征均值（SGC/GLNN 式），仅用训练集边。
+
+    这是"图无关"的：推理时直接查表，不需要访问图/邻居。它把图结构信息以
+    静态向量的形式交给 MLP，弥补图无关学生缺失的 1 跳聚合。
+    """
+
+    features = torch.as_tensor(node_features, dtype=torch.float)
+    train_src = torch.as_tensor(src, dtype=torch.long).flatten()[train_mask]
+    train_dst = torch.as_tensor(dst, dtype=torch.long).flatten()[train_mask]
+    und_u = torch.cat([train_src, train_dst])
+    und_v = torch.cat([train_dst, train_src])
+    aggregated = torch.zeros(num_rows, features.size(1), dtype=torch.float)
+    aggregated.index_add_(0, und_u, features[und_v])
+    counts = torch.zeros(num_rows, dtype=torch.float).index_add_(
+        0, und_u, torch.ones(und_u.numel())
+    )
+    mean = aggregated / counts.clamp_min(1.0)
+    scale = mean.std(dim=0, keepdim=True).clamp_min(1.0e-6)
+    shifted = mean - mean.mean(dim=0, keepdim=True)
+    standardized = shifted / scale
+    standardized = torch.where(
+        (counts > 0.0).unsqueeze(-1),
+        standardized,
+        torch.zeros((), device=standardized.device),
+    )
+    return standardized.contiguous()
+
+
 def build_temporal_graph_bundle(
     *,
     dataset_name: str,
@@ -303,13 +339,28 @@ def build_temporal_graph_bundle(
     destination_nodes = torch.unique(dst, sorted=True)
     if destination_nodes.numel() < 2:
         raise ValueError("The destination node domain must contain at least two nodes.")
+    if structure_feature_set not in {"basic", "rich", "nbr", "rich_nbr"}:
+        raise ValueError(
+            "structure_feature_set must be one of "
+            "basic/rich/nbr/rich_nbr."
+        )
+    num_nodes = int(features.size(0))
+    hand_set = "rich" if structure_feature_set.startswith("rich") else "basic"
     structure_features = compute_structure_features(
         src,
         dst,
         train_mask,
-        int(features.size(0)),
-        feature_set=structure_feature_set,
+        num_nodes,
+        feature_set=hand_set,
     )
+    if structure_feature_set.endswith("nbr"):
+        # 追加预计算的 1 跳邻居特征均值（图无关的静态结构信息）。
+        neighbor_mean = compute_neighbor_feature_mean(
+            features, src, dst, train_mask, num_nodes
+        )
+        structure_features = torch.cat(
+            [structure_features, neighbor_mean], dim=-1
+        )
 
     return TemporalGraphBundle(
         dataset_name=dataset_name,

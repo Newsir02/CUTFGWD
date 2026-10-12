@@ -97,9 +97,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--structure-feature-set",
-        choices=("basic", "rich"),
+        choices=("basic", "rich", "nbr", "rich_nbr"),
         default="basic",
-        help="结构/时序特征集合：basic=5 维（旧版），rich=12 维。",
+        help=(
+            "结构/时序特征集合：basic=5 维手工特征；rich=12 维手工特征；"
+            "nbr=basic+1 跳邻居特征均值；rich_nbr=rich+邻居特征均值。"
+        ),
     )
     parser.add_argument("--time-dim", type=int, default=16)
     parser.add_argument("--relation-dim", type=int, default=64)
