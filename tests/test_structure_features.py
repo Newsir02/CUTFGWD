@@ -17,12 +17,18 @@ def test_compute_structure_features_shape_and_determinism() -> None:
     dst = torch.tensor([1, 2, 2, 3, 3, 3])
     train_mask = torch.tensor([True, True, True, True, False, False])
 
-    features = compute_structure_features(src, dst, train_mask, num_rows=5)
+    basic = compute_structure_features(src, dst, train_mask, num_rows=5)
+    rich = compute_structure_features(
+        src, dst, train_mask, num_rows=5, feature_set="rich"
+    )
 
-    assert features.shape == (5, STRUCTURE_FEATURE_DIM)
-    assert torch.isfinite(features).all()
+    assert basic.shape == (5, 5)
+    assert rich.shape == (5, STRUCTURE_FEATURE_DIM)
+    assert torch.isfinite(rich).all()
+    # 前 5 维与 basic 完全一致。
+    assert torch.allclose(rich[:, :5], basic)
     # 从未在训练集出现过的节点特征应为标准化后的 0。
-    assert torch.allclose(features[4], torch.zeros(STRUCTURE_FEATURE_DIM))
+    assert torch.allclose(rich[4], torch.zeros(STRUCTURE_FEATURE_DIM))
 
 
 def test_structure_features_do_not_change_node_features() -> None:
@@ -32,6 +38,7 @@ def test_structure_features_do_not_change_node_features() -> None:
         feature_dim=4,
         edge_feature_dim=2,
         seed=11,
+        structure_feature_set="rich",
     )
 
     assert bundle.structure_features is not None
@@ -49,6 +56,7 @@ def test_build_student_concatenates_structure_features() -> None:
         edge_feature_dim=2,
         num_candidates=3,
         seed=11,
+        structure_feature_set="rich",
     )
     args = parse_args(["--dataset", "synthetic", "--structure-features"])
 

@@ -20,6 +20,7 @@ def build_synthetic_temporal_graph(
     train_ratio: float = 0.70,
     val_ratio: float = 0.15,
     seed: int = 42,
+    structure_feature_set: str = "basic",
 ) -> TemporalGraphBundle:
     """生成仅供自动化 smoke 使用的连续正事件流。"""
 
@@ -112,4 +113,5 @@ def build_synthetic_temporal_graph(
         test_mask=event_ids >= val_end,
         feature_dim=feature_dim,
         official_evaluation=False,
+        structure_feature_set=structure_feature_set,
     )

@@ -95,6 +95,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "使图无关学生也具备结构/近期活跃度感知。"
         ),
     )
+    parser.add_argument(
+        "--structure-feature-set",
+        choices=("basic", "rich"),
+        default="basic",
+        help="结构/时序特征集合：basic=5 维（旧版），rich=12 维。",
+    )
     parser.add_argument("--time-dim", type=int, default=16)
     parser.add_argument("--relation-dim", type=int, default=64)
     parser.add_argument("--relation-slots", type=int, default=8)
@@ -272,6 +278,7 @@ def make_loaders(
             num_candidates=args.num_candidates,
             history_size=args.history_size,
             seed=args.seed,
+            structure_feature_set=args.structure_feature_set,
         )
     else:
         bundle = build_tgb_temporal_graph(
@@ -284,6 +291,7 @@ def make_loaders(
             seed=args.seed,
             max_events=args.max_real_events,
             download=args.tgb_download,
+            structure_feature_set=args.structure_feature_set,
         )
     common = {
         "bundle": bundle,

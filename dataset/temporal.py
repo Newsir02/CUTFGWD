@@ -103,6 +103,7 @@ def compute_structure_features(
     dst: Tensor,
     train_mask: Tensor,
     num_rows: int,
+    feature_set: str = "basic",
 ) -> Tensor:
     """从**训练集**事件流统计每个节点的结构/时序特征（图无关、推理期静态）。
 
@@ -116,8 +117,11 @@ def compute_structure_features(
       - 出现位置标准差（时间分布离散度/爆发度）。
 
     仅依赖训练集（无泄漏）；输出按列标准化，训练集未出现的节点置为 0。
+    `feature_set="basic"` 只返回前 5 维（与旧版一致），`"rich"` 返回全部 12 维。
     """
 
+    if feature_set not in {"basic", "rich"}:
+        raise ValueError("feature_set must be 'basic' or 'rich'.")
     src = torch.as_tensor(src, dtype=torch.long).flatten()
     dst = torch.as_tensor(dst, dtype=torch.long).flatten()
     train_mask = torch.as_tensor(train_mask, dtype=torch.bool).flatten()
@@ -227,6 +231,8 @@ def compute_structure_features(
     # 训练集中从未出现的节点映射为中性 0，而不是 -mean/std。
     seen_any = (out_degree + in_degree) > 0.0
     standardized = torch.where(seen_any.unsqueeze(-1), standardized, zero)
+    if feature_set == "basic":
+        standardized = standardized[:, :5]
     return standardized.contiguous()
 
 
@@ -242,6 +248,7 @@ def build_temporal_graph_bundle(
     official_evaluation: bool,
     tgb_dataset: object | None = None,
     max_events: int = 0,
+    structure_feature_set: str = "basic",
 ) -> TemporalGraphBundle:
     """校验官方事件流，并为教师和学生补充稳定的辅助字段。"""
 
@@ -301,6 +308,7 @@ def build_temporal_graph_bundle(
         dst,
         train_mask,
         int(features.size(0)),
+        feature_set=structure_feature_set,
     )
 
     return TemporalGraphBundle(

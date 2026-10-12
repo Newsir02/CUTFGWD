@@ -75,6 +75,7 @@ def build_tgb_temporal_graph(
     seed: int = 42,
     max_events: int = 0,
     download: bool = True,
+    structure_feature_set: str = "basic",
 ) -> TemporalGraphBundle:
     """直接加载 TGB 的 PyG TemporalData，不复制或重映射事件。"""
 
@@ -99,4 +100,5 @@ def build_tgb_temporal_graph(
         official_evaluation=max_events <= 0,
         tgb_dataset=dataset,
         max_events=max_events,
+        structure_feature_set=structure_feature_set,
     )

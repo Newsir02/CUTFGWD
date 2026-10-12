@@ -97,9 +97,13 @@ def evaluate_tgb(
     metric = str(backend.eval_metric)
     evaluator = Evaluator(name=bundle.dataset_name)
     data = bundle.split(split)
-    if max_events > 0 and int(data.num_events) > max_events:
-        # 仅取前 max_events 个事件做（开发期）快速 val 选择。
-        data = data[:max_events]
+    num_events = int(data.num_events)
+    if max_events > 0 and num_events > max_events:
+        # 在整段时间轴上均匀抽样 max_events 个事件，避免只取前段带来的时间偏置。
+        picked = torch.linspace(0, num_events - 1, steps=max_events).round().long()
+        mask = torch.zeros(num_events, dtype=torch.bool)
+        mask[picked.unique()] = True
+        data = data[mask]
     loader = TemporalDataLoader(data, batch_size=batch_size)
     model.eval()
     values: list[float] = []
