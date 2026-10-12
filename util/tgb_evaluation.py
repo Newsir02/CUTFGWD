@@ -11,33 +11,7 @@ from dataset.temporal import TemporalGraphBundle
 
 
 EvaluationSplit = Literal["val", "test"]
-
-
-def _single_event_candidates(
-    batch: TemporalData,
-    index: int,
-    negative_destinations: object,
-    device: torch.device,
-) -> dict[str, Tensor]:
-    negatives = torch.as_tensor(
-        negative_destinations,
-        dtype=torch.long,
-        device=device,
-    ).flatten()
-    if negatives.numel() == 0:
-        raise ValueError("TGB official evaluation returned no negative targets.")
-    positive = batch.dst[index : index + 1].to(device)
-    candidates = torch.cat([positive, negatives]).unsqueeze(0)
-    return {
-        "event_index": batch.event_index[index : index + 1].to(device),
-        "src": batch.src[index : index + 1].to(device),
-        "positive_dst": positive,
-        "candidates": candidates,
-        "target": torch.zeros(1, dtype=torch.long, device=device),
-        "timestamp": batch.timestamp[index : index + 1].to(device),
-        "event_time": batch.t[index : index + 1].to(device),
-        "edge_features": batch.msg[index : index + 1].to(device),
-    }
+DEFAULT_SCORE_CHUNK = 16
 
 
 def _positive_update_batch(
@@ -53,14 +27,70 @@ def _positive_update_batch(
     }
 
 
-def _score_model(
-    model: nn.Module,
-    batch: dict[str, Tensor],
-) -> dict[str, Tensor]:
-    score_candidates = getattr(model, "score_candidates", None)
-    if callable(score_candidates):
-        return score_candidates(batch, return_relations=False)
+def _score_model(model: nn.Module, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+    scorer = getattr(model, "score_candidates", None)
+    if callable(scorer):
+        return scorer(batch, return_relations=False)
     return model(batch, return_relations=False)
+
+
+def _sampled_split(
+    bundle: TemporalGraphBundle,
+    split: EvaluationSplit,
+    max_events: int,
+    stateful: bool = False,
+) -> TemporalData:
+    data = bundle.split(split)
+    num_events = int(data.num_events)
+    if max_events > 0 and num_events > max_events:
+        if stateful:
+            # 有状态模型（教师/有状态学生）要求事件索引连续，只能取前段。
+            data = data[:max_events]
+        else:
+            # 无状态模型可整段时间轴均匀抽样，避免只取前段的时间偏置。
+            picked = (
+                torch.linspace(0, num_events - 1, steps=max_events).round().long()
+            )
+            mask = torch.zeros(num_events, dtype=torch.bool)
+            mask[picked.unique()] = True
+            data = data[mask]
+    return data
+
+
+def _negative_tensors(
+    negative_batches: object,
+    device: torch.device,
+) -> list[Tensor]:
+    return [
+        torch.as_tensor(item, dtype=torch.long, device=device).flatten()
+        for item in negative_batches
+    ]
+
+
+def _chunk_candidate_batch(
+    positive_batch: TemporalData,
+    negative_tensors: list[Tensor],
+    indices: list[int],
+    device: torch.device,
+) -> dict[str, Tensor]:
+    index = torch.as_tensor(indices, dtype=torch.long, device=device)
+    width = max(int(negative_tensors[i].numel()) for i in indices)
+    rows = len(indices)
+    candidates = torch.zeros(rows, 1 + width, dtype=torch.long, device=device)
+    candidates[:, 0] = positive_batch.dst.to(device).long()[index]
+    for row, event in enumerate(indices):
+        negatives = negative_tensors[event]
+        candidates[row, 1 : 1 + int(negatives.numel())] = negatives
+    return {
+        "event_index": positive_batch.event_index.to(device).long()[index],
+        "src": positive_batch.src.to(device).long()[index],
+        "positive_dst": positive_batch.dst.to(device).long()[index],
+        "candidates": candidates,
+        "target": torch.zeros(rows, dtype=torch.long, device=device),
+        "timestamp": positive_batch.timestamp.to(device).float()[index],
+        "event_time": positive_batch.t.to(device).long()[index],
+        "edge_features": positive_batch.msg.to(device).float()[index],
+    }
 
 
 @torch.no_grad()
@@ -71,8 +101,14 @@ def evaluate_tgb(
     batch_size: int,
     device: torch.device,
     max_events: int = 0,
+    score_chunk: int = DEFAULT_SCORE_CHUNK,
 ) -> dict[str, object]:
-    """使用 TGB 官方历史负样本执行 one-vs-many 动态链路评测。"""
+    """使用 TGB 官方历史负样本执行 one-vs-many 动态链路评测。
+
+    模型打分按 `score_chunk` 个事件一批向量化（默认 16），仅有评分的
+    `evaluator.eval` 仍逐事件进行；同批事件共享同一份模型状态，语义与逐事件
+    打分一致，但显著更快。
+    """
 
     if split not in {"val", "test"}:
         raise ValueError("TGB official evaluation split must be 'val' or 'test'.")
@@ -82,6 +118,8 @@ def evaluate_tgb(
         raise ValueError("Official TGB evaluation requires the TGB dataset backend.")
     if batch_size <= 0:
         raise ValueError("batch_size must be positive.")
+    if score_chunk <= 0:
+        raise ValueError("score_chunk must be positive.")
 
     try:
         from tgb.linkproppred.evaluate import Evaluator
@@ -96,15 +134,12 @@ def evaluate_tgb(
     sampler = backend.negative_sampler
     metric = str(backend.eval_metric)
     evaluator = Evaluator(name=bundle.dataset_name)
-    data = bundle.split(split)
-    num_events = int(data.num_events)
-    if max_events > 0 and num_events > max_events:
-        # 在整段时间轴上均匀抽样 max_events 个事件，避免只取前段带来的时间偏置。
-        picked = torch.linspace(0, num_events - 1, steps=max_events).round().long()
-        mask = torch.zeros(num_events, dtype=torch.bool)
-        mask[picked.unique()] = True
-        data = data[mask]
-    loader = TemporalDataLoader(data, batch_size=batch_size)
+    loader = TemporalDataLoader(
+        _sampled_split(
+            bundle, split, max_events, stateful=hasattr(model, "update_state")
+        ),
+        batch_size=batch_size,
+    )
     model.eval()
     values: list[float] = []
     update_state = getattr(model, "update_state", None)
@@ -120,28 +155,32 @@ def evaluate_tgb(
             split_mode=split,
             **query_kwargs,
         )
-        if len(negative_batches) != int(positive_batch.num_events):
+        count = int(positive_batch.num_events)
+        if len(negative_batches) != count:
             raise ValueError(
                 "TGB negative sampler returned a different number of event groups."
             )
-        for index, negative_destinations in enumerate(negative_batches):
-            candidate_batch = _single_event_candidates(
-                positive_batch,
-                index,
-                negative_destinations,
-                device,
+        negative_tensors = _negative_tensors(negative_batches, device)
+        scored: list[tuple[int, Tensor]] = []
+        for start in range(0, count, score_chunk):
+            indices = list(range(start, min(start + score_chunk, count)))
+            candidate_batch = _chunk_candidate_batch(
+                positive_batch, negative_tensors, indices, device
             )
-            logits = _score_model(model, candidate_batch)["logits"][0]
+            logits = _score_model(model, candidate_batch)["logits"]
+            for row, event in enumerate(indices):
+                width = int(negative_tensors[event].numel())
+                scored.append((event, logits[row, : 1 + width]))
+        for _, row in scored:
             result = evaluator.eval(
                 {
-                    "y_pred_pos": logits[:1],
-                    "y_pred_neg": logits[1:],
+                    "y_pred_pos": row[:1],
+                    "y_pred_neg": row[1:],
                     "eval_metric": [metric],
                 }
             )
             values.append(float(result[metric]))
-
-        # 同一正事件 batch 全部打分后，教师才观察这些真实边。
+        # 同一正事件 batch 全部打分后才让模型观察这些真实边（与逐事件版一致）。
         if callable(update_state):
             update_state(_positive_update_batch(positive_batch, device))
 
