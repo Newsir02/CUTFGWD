@@ -45,7 +45,23 @@
 ## 当前最优配方
 `logit 0.5 + rank 0.5 + relation(OT, fgw2/s8, fused_alpha≈0.05~0.20) + diversity 0.01 + 结构特征`，anchor 关闭 → test ≈ 0.437~0.439。
 
+## 表 3：确认实验（多 seed；`--ot-fast`，diversity 0.01，logit/rank 0.5，relation 1.0，anchor 0）
+
+| 配方 | seed 42 | seed 43 | seed 44 | mean |
+|---|---|---|---|---|
+| 监督（结构特征，无 KD） | 0.4216 | – | – | – |
+| +logit+rank（kd_lr） | 0.4243 | – | – | – |
+| +OT（kd_lr_r，全迭代，无 div） | 0.4335 | – | – | – |
+| +OT+diversity，fused_alpha=0.20 | 0.4387 | 0.4268 | 0.4235 | **0.4297**（std≈0.007） |
+| +OT+diversity，fused_alpha=0.05 | 0.4324 | 0.4266 | – | 0.4295 |
+| +OT+diversity，fused_alpha=0.10 | 0.4356 | – | – | – |
+
+## 结论（确认后）
+- 蒸馏配方（**OT + diversity + 预测 KD**）在多 seed 下稳定优于监督基线：mean ≈ **0.430**（范围 0.427~0.430），较监督 0.4216 提升 **+0.008**，较预测 KD 0.4243 提升约 +0.005。
+- **seed 波动 std ≈ 0.007**，与配置差异（<0.01）同量级 → `fused_alpha ∈ {0.05,0.10,0.20}` 之间**无法区分**，不能用单 seed 断言谁最好。
+- 结论：**OT 的贡献真实但幅度有限**（~+0.008）；当前瓶颈是图无关 MLP 的输入信息量，而非 OT 超参。
+
 ## 待办
-1. 多 seed（42/43/44）+ 全量 val 复核 `ot_fast_div` 与 `fused_alpha ∈ {0.05,0.1,0.2}`。
-2. 试 `fused_alpha 0.05 + diversity` 组合。
-3. 增强结构/时序输入特征以进一步逼近教师。
+1. 增强结构/时序输入特征（多跳/PPR/时间衰减度等）以抬升 MLP 上限——这是下一步主要方向。
+2. 如需论文数字：用全量 val + 3 seed 对最终配方做正式评测。
+3. 如继续调 OT：在更强特征下重扫 `fused_alpha`（当前被 seed 噪声掩盖）。
