@@ -61,6 +61,16 @@ def test_nbr_feature_set_shape() -> None:
     assert bundle.structure_features.shape == (12, 5 + 4)
     assert torch.isfinite(bundle.structure_features).all()
 
+    bundle2 = build_synthetic_temporal_graph(
+        num_nodes=12,
+        num_events=20,
+        feature_dim=4,
+        edge_feature_dim=2,
+        seed=11,
+        structure_feature_set="nbr2",
+    )
+    assert bundle2.structure_features.shape == (12, 5 + 2 * 4)
+
 
 def test_build_student_concatenates_structure_features() -> None:
     bundle = build_synthetic_temporal_graph(

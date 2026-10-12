@@ -237,39 +237,49 @@ def compute_structure_features(
     return standardized.contiguous()
 
 
+#: 各特征集合对应的邻居聚合跳数。
+NEIGHBOR_HOPS = {"nbr": 1, "rich_nbr": 1, "nbr2": 2, "nbr3": 3}
+
+
 def compute_neighbor_feature_mean(
     node_features: Tensor,
     src: Tensor,
     dst: Tensor,
     train_mask: Tensor,
     num_rows: int,
+    hops: int = 1,
 ) -> Tensor:
-    """预计算的无向 1 跳邻居特征均值（SGC/GLNN 式），仅用训练集边。
+    """预计算的无向 K 跳邻居特征均值（SGC/GLNN 式），仅用训练集边。
 
-    这是"图无关"的：推理时直接查表，不需要访问图/邻居。它把图结构信息以
-    静态向量的形式交给 MLP，弥补图无关学生缺失的 1 跳聚合。
+    逐跳做行归一化的邻居均值传播（A_mean^k X），把每一跳的结果分别标准化后
+    按跳数拼接。这是"图无关"的：推理时直接查表，不需要访问图/邻居。
     """
 
+    if hops < 1:
+        raise ValueError("hops must be at least 1.")
     features = torch.as_tensor(node_features, dtype=torch.float)
     train_src = torch.as_tensor(src, dtype=torch.long).flatten()[train_mask]
     train_dst = torch.as_tensor(dst, dtype=torch.long).flatten()[train_mask]
     und_u = torch.cat([train_src, train_dst])
     und_v = torch.cat([train_dst, train_src])
-    aggregated = torch.zeros(num_rows, features.size(1), dtype=torch.float)
-    aggregated.index_add_(0, und_u, features[und_v])
     counts = torch.zeros(num_rows, dtype=torch.float).index_add_(
         0, und_u, torch.ones(und_u.numel())
     )
-    mean = aggregated / counts.clamp_min(1.0).unsqueeze(-1)
-    scale = mean.std(dim=0, keepdim=True).clamp_min(1.0e-6)
-    shifted = mean - mean.mean(dim=0, keepdim=True)
-    standardized = shifted / scale
-    standardized = torch.where(
-        (counts > 0.0).unsqueeze(-1),
-        standardized,
-        torch.zeros((), device=standardized.device),
-    )
-    return standardized.contiguous()
+    degree = counts.clamp_min(1.0).unsqueeze(-1)
+    zero = torch.zeros((), device=features.device)
+    blocks = []
+    state = features
+    for _ in range(hops):
+        aggregated = torch.zeros(
+            num_rows, features.size(1), dtype=torch.float, device=features.device
+        )
+        aggregated.index_add_(0, und_u, state[und_v])
+        state = aggregated / degree
+        scale = state.std(dim=0, keepdim=True).clamp_min(1.0e-6)
+        block = (state - state.mean(dim=0, keepdim=True)) / scale
+        block = torch.where((counts > 0.0).unsqueeze(-1), block, zero)
+        blocks.append(block)
+    return torch.cat(blocks, dim=-1).contiguous()
 
 
 def build_temporal_graph_bundle(
@@ -339,10 +349,12 @@ def build_temporal_graph_bundle(
     destination_nodes = torch.unique(dst, sorted=True)
     if destination_nodes.numel() < 2:
         raise ValueError("The destination node domain must contain at least two nodes.")
-    if structure_feature_set not in {"basic", "rich", "nbr", "rich_nbr"}:
+    valid_sets = {"basic", "rich", *NEIGHBOR_HOPS}
+    if structure_feature_set not in valid_sets:
         raise ValueError(
-            "structure_feature_set must be one of "
-            "basic/rich/nbr/rich_nbr."
+            "structure_feature_set must be one of: "
+            + "/".join(sorted(valid_sets))
+            + "."
         )
     num_nodes = int(features.size(0))
     hand_set = "rich" if structure_feature_set.startswith("rich") else "basic"
@@ -353,10 +365,11 @@ def build_temporal_graph_bundle(
         num_nodes,
         feature_set=hand_set,
     )
-    if structure_feature_set.endswith("nbr"):
-        # 追加预计算的 1 跳邻居特征均值（图无关的静态结构信息）。
+    hops = NEIGHBOR_HOPS.get(structure_feature_set, 0)
+    if hops > 0:
+        # 追加预计算的 K 跳邻居特征均值（图无关的静态结构信息）。
         neighbor_mean = compute_neighbor_feature_mean(
-            features, src, dst, train_mask, num_nodes
+            features, src, dst, train_mask, num_nodes, hops=hops
         )
         structure_features = torch.cat(
             [structure_features, neighbor_mean], dim=-1
