@@ -4,7 +4,11 @@ from pathlib import Path
 
 import torch
 
-from dataset import build_synthetic_temporal_graph, compute_structure_features
+from dataset import (
+    STRUCTURE_FEATURE_DIM,
+    build_synthetic_temporal_graph,
+    compute_structure_features,
+)
 from train import build_student, main, parse_args
 
 
@@ -15,10 +19,10 @@ def test_compute_structure_features_shape_and_determinism() -> None:
 
     features = compute_structure_features(src, dst, train_mask, num_rows=5)
 
-    assert features.shape == (5, 5)
+    assert features.shape == (5, STRUCTURE_FEATURE_DIM)
     assert torch.isfinite(features).all()
     # 从未在训练集出现过的节点特征应为标准化后的 0。
-    assert torch.allclose(features[4], torch.zeros(5))
+    assert torch.allclose(features[4], torch.zeros(STRUCTURE_FEATURE_DIM))
 
 
 def test_structure_features_do_not_change_node_features() -> None:
@@ -31,7 +35,10 @@ def test_structure_features_do_not_change_node_features() -> None:
     )
 
     assert bundle.structure_features is not None
-    assert bundle.structure_features.shape == (bundle.node_features.size(0), 5)
+    assert bundle.structure_features.shape == (
+        bundle.node_features.size(0),
+        STRUCTURE_FEATURE_DIM,
+    )
 
 
 def test_build_student_concatenates_structure_features() -> None:
@@ -51,7 +58,7 @@ def test_build_student_concatenates_structure_features() -> None:
         bundle.structure_features,
     )
 
-    assert student.model_config["node_feature_dim"] == 4 + 5
+    assert student.model_config["node_feature_dim"] == 4 + STRUCTURE_FEATURE_DIM
 
 
 def test_structure_features_end_to_end(

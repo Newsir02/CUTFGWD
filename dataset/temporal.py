@@ -94,58 +94,131 @@ def _prepare_node_features(
     return features.contiguous()
 
 
+#: 结构/时序特征的维度；前 5 维与旧版基础特征完全一致（便于对照）。
+STRUCTURE_FEATURE_DIM = 12
+
+
 def compute_structure_features(
     src: Tensor,
     dst: Tensor,
     train_mask: Tensor,
     num_rows: int,
 ) -> Tensor:
-    """从训练集事件流统计每个节点的结构/时序特征。
+    """从**训练集**事件流统计每个节点的结构/时序特征（图无关、推理期静态）。
 
-    这些特征只依赖训练集，推理时作为静态输入喂给图无关学生，从而在不访问图的
-    前提下提供"结构感知"和"近期活跃度"信息（参考 GLNN / InfGraND / L-STEP）。
-    输出已按维标准化。
+    前 5 维与旧版基础特征一致：出度、入度、活跃度、首次/最近出现位置。
+    其余维度更丰富：
+      - 唯一出/入邻居数（去重后的真实邻居规模）；
+      - 无向图二跳路径数（多跳结构代理，参考 InfGraND）；
+      - 互惠边数（i->j 且 j->i）；
+      - PageRank（无向图 3 次幂迭代，全局重要性）；
+      - 近期活跃度（训练集最后 20% 窗口内的度数）；
+      - 出现位置标准差（时间分布离散度/爆发度）。
+
+    仅依赖训练集（无泄漏）；输出按列标准化，训练集未出现的节点置为 0。
     """
 
-    train_src = src[train_mask].long()
-    train_dst = dst[train_mask].long()
-    out_degree = torch.zeros(num_rows, dtype=torch.float)
-    in_degree = torch.zeros(num_rows, dtype=torch.float)
-    out_degree.index_add_(0, train_src, torch.ones(train_src.numel()))
-    in_degree.index_add_(0, train_dst, torch.ones(train_dst.numel()))
-    position_count = int(train_src.numel())
-    positions = torch.arange(position_count, dtype=torch.float)
+    src = torch.as_tensor(src, dtype=torch.long).flatten()
+    dst = torch.as_tensor(dst, dtype=torch.long).flatten()
+    train_mask = torch.as_tensor(train_mask, dtype=torch.bool).flatten()
+    train_src = src[train_mask]
+    train_dst = dst[train_mask]
+    num_rows = int(num_rows)
+    device = train_src.device
+    dtype = torch.float32
+
+    def zeros() -> Tensor:
+        return torch.zeros(num_rows, dtype=dtype, device=device)
+
+    def accumulate(index: Tensor, values: Tensor) -> Tensor:
+        return zeros().index_add_(0, index, values)
+
+    count = int(train_src.numel())
+    ones = torch.ones(count, dtype=dtype, device=device)
+
+    out_degree = accumulate(train_src, ones)
+    in_degree = accumulate(train_dst, ones)
+
+    # 唯一出/入邻居（去掉重复边后的真实邻居规模）。
+    unique_out_key = torch.unique(train_src * num_rows + train_dst)
+    unique_in_key = torch.unique(train_dst * num_rows + train_src)
+    unique_out = accumulate(
+        unique_out_key // num_rows, torch.ones_like(unique_out_key, dtype=dtype)
+    )
+    unique_in = accumulate(
+        unique_in_key // num_rows, torch.ones_like(unique_in_key, dtype=dtype)
+    )
+
+    # 无向图：二跳路径数与度数。
+    und_u = torch.cat([train_src, train_dst])
+    und_v = torch.cat([train_dst, train_src])
+    und_degree = accumulate(und_u, torch.ones_like(und_u, dtype=dtype))
+    two_hop = accumulate(und_u, und_degree[und_v])
+
+    # 互惠边（i->j 且 j->i）。
+    forward_key = train_src * num_rows + train_dst
+    backward_key = train_dst * num_rows + train_src
+    reciprocal = torch.isin(backward_key, forward_key).to(dtype)
+    reciprocal_out = accumulate(train_src, reciprocal)
+
+    # 无向 PageRank（3 次幂迭代）。
+    damping = 0.85
+    degree_safe = und_degree.clamp_min(1.0)
+    rank = torch.full((num_rows,), 1.0 / max(num_rows, 1), dtype=dtype, device=device)
+    for _ in range(3):
+        incoming = accumulate(und_u, rank[und_v] / degree_safe[und_v])
+        rank = (1.0 - damping) / max(num_rows, 1) + damping * incoming
+
+    # 出现位置：首/末位置与位置标准差。
+    positions = torch.arange(count, dtype=dtype, device=device)
+    span = float(max(count - 1, 1))
     appear_node = torch.cat([train_src, train_dst])
     appear_position = torch.cat([positions, positions])
-    span = max(position_count - 1, 1)
-    first_seen = torch.full((num_rows,), float("inf")).scatter_reduce_(
-        0,
-        appear_node,
-        appear_position,
-        reduce="amin",
-        include_self=True,
+    seen_count = accumulate(appear_node, torch.ones_like(appear_node, dtype=dtype))
+    position_sum = accumulate(appear_node, appear_position)
+    position_sq_sum = accumulate(appear_node, appear_position * appear_position)
+    first_seen = torch.full((num_rows,), float("inf"), device=device).scatter_reduce_(
+        0, appear_node, appear_position, reduce="amin", include_self=True
     )
-    last_seen = torch.full((num_rows,), -1.0).scatter_reduce_(
-        0,
-        appear_node,
-        appear_position,
-        reduce="amax",
-        include_self=True,
+    last_seen = torch.full((num_rows,), -1.0, device=device).scatter_reduce_(
+        0, appear_node, appear_position, reduce="amax", include_self=True
     )
     seen = torch.isfinite(first_seen)
-    first_norm = torch.where(
-        seen,
-        first_seen / float(span),
-        torch.zeros(()),
+    zero = torch.zeros((), device=device)
+    first_norm = torch.where(seen, first_seen / span, zero)
+    last_norm = torch.where(seen, last_seen.clamp_min(0.0) / span, zero)
+    mean_position = position_sum / seen_count.clamp_min(1.0)
+    variance = (
+        position_sq_sum / seen_count.clamp_min(1.0) - mean_position * mean_position
+    ).clamp_min(0.0)
+    position_std = variance.sqrt() / span
+
+    # 近期活跃度（训练集最后 20% 事件窗口内的度数）。
+    window_start = int(count * 0.8)
+    window = positions >= float(window_start)
+    recent_src = train_src[window]
+    recent_dst = train_dst[window]
+    recent_activity = accumulate(recent_src, torch.ones_like(recent_src, dtype=dtype))
+    recent_activity = recent_activity + accumulate(
+        recent_dst, torch.ones_like(recent_dst, dtype=dtype)
     )
-    last_norm = torch.where(
-        seen,
-        last_seen.clamp_min(0.0) / float(span),
-        torch.zeros(()),
-    )
+
     activity = torch.log1p(out_degree + in_degree)
     features = torch.stack(
-        [out_degree, in_degree, activity, first_norm, last_norm],
+        [
+            out_degree,
+            in_degree,
+            activity,
+            first_norm,
+            last_norm,
+            torch.log1p(unique_out),
+            torch.log1p(unique_in),
+            torch.log1p(two_hop),
+            torch.log1p(reciprocal_out),
+            rank,
+            torch.log1p(recent_activity),
+            position_std,
+        ],
         dim=-1,
     )
     mean = features.mean(dim=0, keepdim=True)
@@ -153,11 +226,7 @@ def compute_structure_features(
     standardized = (features - mean) / std
     # 训练集中从未出现的节点映射为中性 0，而不是 -mean/std。
     seen_any = (out_degree + in_degree) > 0.0
-    standardized = torch.where(
-        seen_any.unsqueeze(-1),
-        standardized,
-        torch.zeros(()),
-    )
+    standardized = torch.where(seen_any.unsqueeze(-1), standardized, zero)
     return standardized.contiguous()
 
 
