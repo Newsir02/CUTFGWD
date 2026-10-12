@@ -260,7 +260,7 @@ def compute_neighbor_feature_mean(
     counts = torch.zeros(num_rows, dtype=torch.float).index_add_(
         0, und_u, torch.ones(und_u.numel())
     )
-    mean = aggregated / counts.clamp_min(1.0)
+    mean = aggregated / counts.clamp_min(1.0).unsqueeze(-1)
     scale = mean.std(dim=0, keepdim=True).clamp_min(1.0e-6)
     shifted = mean - mean.mean(dim=0, keepdim=True)
     standardized = shifted / scale
