@@ -114,6 +114,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=30)
     parser.add_argument("--teacher-lr", type=float, default=1.0e-3)
     parser.add_argument("--student-lr", type=float, default=1.0e-3)
+    parser.add_argument(
+        "--ema-decay",
+        type=float,
+        default=0.0,
+        help=(
+            "学生权重的 EMA 衰减系数：>0 启用（如 0.999），用于降低 seed 方差。"
+        ),
+    )
     parser.add_argument("--weight-decay", type=float, default=1.0e-4)
     parser.add_argument("--grad-clip", type=float, default=5.0)
 
@@ -196,6 +204,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("patience must be non-negative.")
     if args.eval_max_events < 0:
         raise ValueError("eval-max-events must be non-negative.")
+    if not 0.0 <= args.ema_decay < 1.0:
+        raise ValueError("ema-decay must be in [0, 1).")
     if args.student_neighbors <= 0:
         raise ValueError("student-neighbors must be positive.")
     if args.teacher_hidden % 2 != 0:
@@ -607,11 +617,52 @@ def train_teacher_epoch(
     return meter.average
 
 
-def _copy_state_dict(model: nn.Module) -> Dict[str, Tensor]:
+def _copy_state_dict(source) -> Dict[str, Tensor]:
+    state = source.state_dict() if isinstance(source, nn.Module) else source
     return {
-        name: value.detach().cpu().clone()
-        for name, value in model.state_dict().items()
+        name: value.detach().cpu().clone() for name, value in state.items()
     }
+
+
+def _make_ema(model: nn.Module, decay: float) -> Optional[Dict[str, Tensor]]:
+    """创建学生权重的 EMA 影子副本；decay<=0 时返回 None（不启用）。"""
+
+    if decay <= 0.0:
+        return None
+    return {k: v.detach().clone() for k, v in model.state_dict().items()}
+
+
+def _ema_update(
+    shadow: Optional[Dict[str, Tensor]],
+    model: nn.Module,
+    decay: float,
+) -> None:
+    if shadow is None:
+        return
+    for name, value in model.state_dict().items():
+        slot = shadow[name]
+        if value.dtype.is_floating_point:
+            slot.mul_(decay).add_(value.detach(), alpha=1.0 - decay)
+        else:
+            slot.copy_(value)
+
+
+def _evaluate_state(
+    model: nn.Module,
+    state: Dict[str, Tensor],
+    bundle: TemporalGraphBundle,
+    loader: CandidateBatchLoader,
+    split: str,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> Dict[str, object]:
+    """临时把 model 权重换成 state 做一次评测，随后恢复原权重。"""
+
+    backup = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    model.load_state_dict(state, strict=True)
+    result = evaluate_split(model, bundle, loader, split, args, device)
+    model.load_state_dict(backup, strict=True)
+    return result
 
 
 def _metric_value(metrics: Dict[str, object]) -> float:
@@ -719,6 +770,8 @@ def train_student_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     grad_clip: float,
+    ema_shadow: Optional[Dict[str, Tensor]] = None,
+    ema_decay: float = 0.0,
 ) -> Dict[str, float]:
     student.train()
     teacher.eval()
@@ -757,6 +810,7 @@ def train_student_epoch(
         total.backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), grad_clip)
         optimizer.step()
+        _ema_update(ema_shadow, student, ema_decay)
         count = int(batch["target"].numel())
         for name, value in components.items():
             meters.setdefault(name, AverageMeter()).update(float(value), count)
@@ -799,6 +853,8 @@ def distill_student(
     best_state: Optional[Dict[str, Tensor]] = None
     stopper = EarlyStopping(args.patience)
     reset_student_state = getattr(student, "reset_state", None)
+    ema_decay = float(getattr(args, "ema_decay", 0.0))
+    ema_shadow = _make_ema(student, ema_decay)
     for epoch in range(1, args.student_epochs + 1):
         teacher.reset_state()
         if callable(reset_student_state):
@@ -811,15 +867,28 @@ def distill_student(
             optimizer,
             device,
             args.grad_clip,
+            ema_shadow=ema_shadow,
+            ema_decay=ema_decay,
         )
-        validation = evaluate_split(
-            student,
-            bundle,
-            validation_loader,
-            "val",
-            args,
-            device,
-        )
+        if ema_shadow is not None:
+            validation = _evaluate_state(
+                student,
+                ema_shadow,
+                bundle,
+                validation_loader,
+                "val",
+                args,
+                device,
+            )
+        else:
+            validation = evaluate_split(
+                student,
+                bundle,
+                validation_loader,
+                "val",
+                args,
+                device,
+            )
         metric_name = str(validation["metric"])
         prefix = "official" if validation["official"] else "smoke"
         metric_value = _metric_value(validation)
@@ -835,7 +904,9 @@ def distill_student(
         improved, should_stop = stopper.update(metric_value, epoch)
         if improved:
             best_metric = metric_value
-            best_state = _copy_state_dict(student)
+            best_state = _copy_state_dict(
+                ema_shadow if ema_shadow is not None else student
+            )
         if should_stop:
             print_early_stopping("Student", epoch, stopper, prefix, metric_name)
             break
@@ -851,6 +922,8 @@ def train_supervised_student_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     grad_clip: float,
+    ema_shadow: Optional[Dict[str, Tensor]] = None,
+    ema_decay: float = 0.0,
 ) -> float:
     student.train()
     update_student_state = getattr(student, "update_state", None)
@@ -865,6 +938,7 @@ def train_supervised_student_epoch(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), grad_clip)
         optimizer.step()
+        _ema_update(ema_shadow, student, ema_decay)
         meter.update(float(loss.detach()), int(batch["target"].numel()))
     return meter.average
 
@@ -886,6 +960,8 @@ def train_supervised_student(
     best_state: Optional[Dict[str, Tensor]] = None
     stopper = EarlyStopping(args.patience)
     reset_student_state = getattr(student, "reset_state", None)
+    ema_decay = float(getattr(args, "ema_decay", 0.0))
+    ema_shadow = _make_ema(student, ema_decay)
     for epoch in range(1, args.student_epochs + 1):
         if callable(reset_student_state):
             reset_student_state()
@@ -895,15 +971,28 @@ def train_supervised_student(
             optimizer,
             device,
             args.grad_clip,
+            ema_shadow=ema_shadow,
+            ema_decay=ema_decay,
         )
-        validation = evaluate_split(
-            student,
-            bundle,
-            validation_loader,
-            "val",
-            args,
-            device,
-        )
+        if ema_shadow is not None:
+            validation = _evaluate_state(
+                student,
+                ema_shadow,
+                bundle,
+                validation_loader,
+                "val",
+                args,
+                device,
+            )
+        else:
+            validation = evaluate_split(
+                student,
+                bundle,
+                validation_loader,
+                "val",
+                args,
+                device,
+            )
         metric_name = str(validation["metric"])
         prefix = "official" if validation["official"] else "smoke"
         metric_value = _metric_value(validation)
@@ -915,7 +1004,9 @@ def train_supervised_student(
         improved, should_stop = stopper.update(metric_value, epoch)
         if improved:
             best_metric = metric_value
-            best_state = _copy_state_dict(student)
+            best_state = _copy_state_dict(
+                ema_shadow if ema_shadow is not None else student
+            )
         if should_stop:
             print_early_stopping(
                 "Supervised student",
