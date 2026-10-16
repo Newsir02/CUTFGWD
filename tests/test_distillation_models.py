@@ -65,4 +65,34 @@ def test_pyg_tgn_and_lightst_backpropagate_through_cutfgw() -> None:
         "anchor",
         "relation",
         "diversity",
+        "embed",
     }
+
+
+def test_embedding_distillation_backpropagates() -> None:
+    student_output = {
+        "logits": torch.randn(2, 3, requires_grad=True),
+        "source_embedding": torch.randn(2, 4, requires_grad=True),
+    }
+    teacher_output = {
+        "logits": torch.randn(2, 3),
+        "source_embedding": torch.randn(2, 4),
+    }
+    objective = CUTFGWDDistillation(
+        task_weight=1.0,
+        logit_weight=0.0,
+        rank_weight=0.0,
+        relation_weight=0.0,
+        diversity_weight=0.0,
+        anchor_weight=0.0,
+        embed_weight=0.5,
+    )
+
+    total, parts = objective(
+        student_output, teacher_output, torch.tensor([0, 1])
+    )
+    total.backward()
+
+    assert torch.isfinite(total)
+    assert student_output["source_embedding"].grad is not None
+    assert float(parts["embed"]) > 0.0

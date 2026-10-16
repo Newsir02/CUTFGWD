@@ -133,6 +133,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     # 新增方法参数：默认 None，由 apply_method_configuration 按 --method 填充，
     # 从而保证 `--method baseline` 的默认行为与旧版完全一致。
     parser.add_argument("--anchor-weight", type=float, default=None)
+    parser.add_argument(
+        "--embed-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "特征级蒸馏权重：让学生查询表示逼近教师上下文嵌入"
+            "（要求学生/教师 hidden 维相同）。"
+        ),
+    )
     parser.add_argument("--teacher-relation-weight", type=float, default=None)
     parser.add_argument(
         "--method",
@@ -777,7 +786,9 @@ def train_student_epoch(
     teacher.eval()
     # 仅在确实需要关系张量时才请求，避免零权重分支的额外开销。
     need_teacher_relation = (
-        objective.relation_weight != 0.0 or objective.anchor_weight != 0.0
+        objective.relation_weight != 0.0
+        or objective.anchor_weight != 0.0
+        or getattr(objective, "embed_weight", 0.0) != 0.0
     )
     need_student_relation = (
         objective.relation_weight != 0.0
@@ -833,6 +844,7 @@ def distill_student(
         relation_weight=args.relation_weight,
         diversity_weight=args.diversity_weight,
         anchor_weight=float(args.anchor_weight or 0.0),
+        embed_weight=float(args.embed_weight or 0.0),
         logit_temperature=args.logit_temperature,
         rank_temperature=args.rank_temperature,
         fused_alpha=args.fused_alpha,
@@ -899,6 +911,7 @@ def distill_student(
             f"anchor={losses['anchor']:.4f} "
             f"relation={losses['relation']:.4f} "
             f"diversity={losses['diversity']:.4f} "
+            f"embed={losses['embed']:.4f} "
             f"val_{prefix}_{metric_name}={metric_value:.4f}"
         )
         improved, should_stop = stopper.update(metric_value, epoch)

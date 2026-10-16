@@ -10,6 +10,7 @@ from .kd import (
     anchor_relation_loss,
     logit_kd_loss,
     rank_wasserstein_loss,
+    relation_alignment_loss,
     relation_slot_diversity_loss,
 )
 
@@ -25,6 +26,7 @@ class CUTFGWDDistillation(nn.Module):
         relation_weight: float = 1.0,
         diversity_weight: float = 0.01,
         anchor_weight: float = 0.0,
+        embed_weight: float = 0.0,
         logit_temperature: float = 2.0,
         rank_temperature: float = 1.0,
         **cutfgw_kwargs: float,
@@ -36,6 +38,7 @@ class CUTFGWDDistillation(nn.Module):
         self.relation_weight = relation_weight
         self.diversity_weight = diversity_weight
         self.anchor_weight = anchor_weight
+        self.embed_weight = embed_weight
         self.logit_temperature = logit_temperature
         self.rank_temperature = rank_temperature
         self.relation_loss = CausalUnbalancedTemporalFGW(**cutfgw_kwargs)
@@ -111,6 +114,20 @@ class CUTFGWDDistillation(nn.Module):
         else:
             diversity = zero
 
+        # 特征级蒸馏：让学生查询表示逼近教师的上下文（图）嵌入。
+        if self.embed_weight != 0.0:
+            teacher_embed = teacher_output["source_embedding"].detach()
+            student_embed = student_output["source_embedding"]
+            if student_embed.size(-1) != teacher_embed.size(-1):
+                raise ValueError(
+                    "embedding distillation requires equal student/teacher "
+                    "hidden dims: "
+                    f"{student_embed.size(-1)} vs {teacher_embed.size(-1)}."
+                )
+            embed = relation_alignment_loss(student_embed, teacher_embed)
+        else:
+            embed = zero
+
         total = (
             self.task_weight * task
             + self.logit_weight * logit
@@ -118,6 +135,7 @@ class CUTFGWDDistillation(nn.Module):
             + self.anchor_weight * anchor
             + self.relation_weight * relation
             + self.diversity_weight * diversity
+            + self.embed_weight * embed
         )
         # components 用于日志统计；detach 后避免日志路径保留计算图。
         components = {
@@ -128,5 +146,6 @@ class CUTFGWDDistillation(nn.Module):
             "anchor": anchor.detach(),
             "relation": relation.detach(),
             "diversity": diversity.detach(),
+            "embed": embed.detach(),
         }
         return total, components
