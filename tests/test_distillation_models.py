@@ -72,7 +72,7 @@ def test_pyg_tgn_and_lightst_backpropagate_through_cutfgw() -> None:
 def test_embedding_distillation_backpropagates() -> None:
     student_output = {
         "logits": torch.randn(2, 3, requires_grad=True),
-        "source_embedding": torch.randn(2, 4, requires_grad=True),
+        "embed_projected": torch.randn(2, 4, requires_grad=True),
     }
     teacher_output = {
         "logits": torch.randn(2, 3),
@@ -94,5 +94,5 @@ def test_embedding_distillation_backpropagates() -> None:
     total.backward()
 
     assert torch.isfinite(total)
-    assert student_output["source_embedding"].grad is not None
+    assert student_output["embed_projected"].grad is not None
     assert float(parts["embed"]) > 0.0

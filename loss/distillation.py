@@ -117,7 +117,7 @@ class CUTFGWDDistillation(nn.Module):
         # 特征级蒸馏：让学生查询表示逼近教师的上下文（图）嵌入。
         if self.embed_weight != 0.0:
             teacher_embed = teacher_output["source_embedding"].detach()
-            student_embed = student_output["source_embedding"]
+            student_embed = student_output["embed_projected"]
             if student_embed.size(-1) != teacher_embed.size(-1):
                 raise ValueError(
                     "embedding distillation requires equal student/teacher "

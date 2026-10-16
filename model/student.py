@@ -66,6 +66,8 @@ class LightSTMLPStudent(nn.Module):
             1,
             dropout,
         )
+        # 独立的投影头专用于特征级蒸馏：避免蒸馏目标污染打分用的表示。
+        self.embed_projector = nn.Linear(hidden_dim, hidden_dim)
 
         self.slot_embeddings = nn.Parameter(
             torch.randn(relation_slots, hidden_dim) * 0.02
@@ -127,8 +129,8 @@ class LightSTMLPStudent(nn.Module):
             dim=-1,
         )
         outputs = {"logits": self.score_head(score_inputs).squeeze(-1)}
-        # 供特征级（嵌入）蒸馏使用：学生对该查询节点的上下文表示。
-        outputs["source_embedding"] = source_state
+        # 供特征级（嵌入）蒸馏使用：独立的投影表示（不参与打分）。
+        outputs["embed_projected"] = self.embed_projector(source_state)
 
         if return_relations:
             slot_ages = self._ordered_slot_ages(source_state.size(0))
