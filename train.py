@@ -447,61 +447,143 @@ def build_student(
     )
 
 
+def _student_feature_matrix(
+    bundle: TemporalGraphBundle,
+    expected_dim: int,
+) -> Tensor:
+    raw = bundle.node_features.to(torch.float32)
+    if int(raw.size(1)) == int(expected_dim):
+        return raw
+    structure = bundle.structure_features
+    if (
+        structure is not None
+        and int(raw.size(1)) + int(structure.size(1)) == int(expected_dim)
+    ):
+        return torch.cat([raw, structure.to(torch.float32)], dim=-1)
+    raise ValueError(
+        "Checkpoint node_feature_dim does not match the dataset features: "
+        f"got {expected_dim}, dataset has {int(raw.size(1))} raw"
+        + (
+            f" + {int(structure.size(1))} structure"
+            if structure is not None
+            else ""
+        )
+        + "."
+    )
+
+
 def load_teacher_from_checkpoint(
     checkpoint_path: str | Path,
     bundle: TemporalGraphBundle,
     data_signature: str,
     device: torch.device,
-) -> PyGTGNTeacher:
-    expected_config = {
-        "num_nodes": int(bundle.node_features.size(0)),
-        "num_events": int(bundle.data.num_events),
-        "msg_dim": int(bundle.data.msg.size(1)),
-        "data_signature": data_signature,
-    }
-    payload = load_model_checkpoint(
-        checkpoint_path,
-        expected_model_name="PyGTGNTeacher",
-        expected_model_config=expected_config,
-    )
+) -> nn.Module:
+    """加载 TGN 教师，或把监督训练的学生检查点当作教师复用。
+
+    后者用于教师架构本身过弱的数据集：任何实现了 ``forward`` /
+    ``update_state`` 的 LightST 学生都可以作为蒸馏教师。
+    """
+
+    payload = load_model_checkpoint(checkpoint_path)
     config = payload["model_config"]
-    required = {
-        "hidden_dim",
-        "time_dim",
-        "relation_dim",
-        "temporal_neighbors",
-        "dropout",
-    }
-    missing = sorted(required.difference(config))
-    if missing:
-        raise ValueError(
-            "Teacher checkpoint config is missing: " + ", ".join(missing)
+    model_name = str(payload["model_name"])
+
+    if model_name == "PyGTGNTeacher":
+        expected_config = {
+            "num_nodes": int(bundle.node_features.size(0)),
+            "num_events": int(bundle.data.num_events),
+            "msg_dim": int(bundle.data.msg.size(1)),
+            "data_signature": data_signature,
+        }
+        for name, expected_value in expected_config.items():
+            actual_value = config.get(name)
+            if actual_value != expected_value:
+                raise ValueError(
+                    f"Checkpoint config mismatch for {name!r}: "
+                    f"got {actual_value!r}, expected {expected_value!r}."
+                )
+        required = {
+            "hidden_dim",
+            "time_dim",
+            "relation_dim",
+            "temporal_neighbors",
+            "dropout",
+        }
+        missing = sorted(required.difference(config))
+        if missing:
+            raise ValueError(
+                "Teacher checkpoint config is missing: " + ", ".join(missing)
+            )
+        teacher: nn.Module = PyGTGNTeacher(
+            event_times=bundle.data.t,
+            event_messages=bundle.data.msg,
+            num_nodes=int(config["num_nodes"]),
+            hidden_dim=int(config["hidden_dim"]),
+            time_dim=int(config["time_dim"]),
+            relation_dim=int(config["relation_dim"]),
+            temporal_neighbors=int(config["temporal_neighbors"]),
+            dropout=float(config["dropout"]),
+            teacher_layers=int(config.get("teacher_layers", 1)),
+            node_features=(
+                bundle.node_features
+                if bool(config.get("teacher_node_features", False))
+                else None
+            ),
         )
-    teacher = PyGTGNTeacher(
-        event_times=bundle.data.t,
-        event_messages=bundle.data.msg,
-        num_nodes=int(config["num_nodes"]),
-        hidden_dim=int(config["hidden_dim"]),
-        time_dim=int(config["time_dim"]),
-        relation_dim=int(config["relation_dim"]),
-        temporal_neighbors=int(config["temporal_neighbors"]),
-        dropout=float(config["dropout"]),
-        teacher_layers=int(config.get("teacher_layers", 1)),
-        node_features=(
-            bundle.node_features
-            if bool(config.get("teacher_node_features", False))
-            else None
-        ),
-    ).to(device)
-    state = payload["model"]
+    elif model_name in {"LightSTMLPStudent", "LightGNNStudent"}:
+        if config.get("data_signature") != data_signature:
+            raise ValueError(
+                "Checkpoint config mismatch for 'data_signature': "
+                f"got {config.get('data_signature')!r}, "
+                f"expected {data_signature!r}."
+            )
+        if int(config.get("num_nodes", -1)) != int(
+            bundle.node_features.size(0)
+        ):
+            raise ValueError(
+                "Checkpoint config mismatch for 'num_nodes': "
+                f"got {config.get('num_nodes')!r}, "
+                f"expected {int(bundle.node_features.size(0))!r}."
+            )
+        features = _student_feature_matrix(
+            bundle,
+            int(config["node_feature_dim"]),
+        )
+        common = {
+            "node_features": features,
+            "hidden_dim": int(config["hidden_dim"]),
+            "time_dim": int(config.get("time_dim", 16)),
+            "relation_dim": int(config["relation_dim"]),
+            "relation_slots": int(config.get("relation_slots", 8)),
+            "dropout": float(config.get("dropout", 0.0)),
+            "num_blocks": int(
+                config.get("num_blocks", config.get("student_blocks", 2))
+            ),
+        }
+        arch = str(config.get("student_arch", "mlp"))
+        if arch == "gnn":
+            teacher = LightGNNStudent(
+                neighbors=int(config.get("student_neighbors", 8)),
+                **common,
+            )
+        else:
+            teacher = LightSTMLPStudent(**common)
+    else:
+        raise ValueError(
+            "Unsupported teacher checkpoint model: "
+            f"{model_name!r}; expected PyGTGNTeacher or a LightST student."
+        )
+
     try:
-        teacher.load_state_dict(state, strict=True)
+        teacher.load_state_dict(payload["model"], strict=True)
     except RuntimeError as exc:
         raise ValueError(
             f"Teacher checkpoint parameters are incompatible: {exc}"
         ) from exc
-    teacher.reset_state()
-    return teacher
+    reset_state = getattr(teacher, "reset_state", None)
+    if callable(reset_state):
+        reset_state()
+    return teacher.to(device)
 
 
 @torch.no_grad()
@@ -568,7 +650,7 @@ def evaluate_split(
 
 @torch.no_grad()
 def replay_teacher(
-    teacher: PyGTGNTeacher,
+    teacher: nn.Module,
     loaders: Iterable[CandidateBatchLoader],
     device: torch.device,
 ) -> None:
@@ -581,7 +663,7 @@ def replay_teacher(
 
 
 def evaluate_teacher_from_history(
-    teacher: PyGTGNTeacher,
+    teacher: nn.Module,
     bundle: TemporalGraphBundle,
     history_loaders: Iterable[CandidateBatchLoader],
     target_loader: CandidateBatchLoader,
@@ -791,7 +873,7 @@ def pretrain_teacher(
 
 def train_student_epoch(
     student: LightSTMLPStudent,
-    teacher: PyGTGNTeacher,
+    teacher: nn.Module,
     objective: CUTFGWDDistillation,
     loader: CandidateBatchLoader,
     optimizer: torch.optim.Optimizer,
@@ -815,14 +897,21 @@ def train_student_epoch(
     )
     # 有状态学生（轻量 GNN）需要按 TGN 顺序先打分后写入正边。
     update_student_state = getattr(student, "update_state", None)
+    teacher_scorer = getattr(teacher, "score_candidates", None)
     meters: Dict[str, AverageMeter] = {}
     for raw_batch in loader:
         batch = move_to_device(raw_batch, device)
         with torch.no_grad():
-            teacher_output = teacher.score_candidates(
-                batch,
-                return_relations=need_teacher_relation,
-            )
+            if callable(teacher_scorer):
+                teacher_output = teacher_scorer(
+                    batch,
+                    return_relations=need_teacher_relation,
+                )
+            else:
+                teacher_output = teacher(
+                    batch,
+                    return_relations=need_teacher_relation,
+                )
             teacher.update_state(batch)
         student_output = student(
             batch,
@@ -848,7 +937,7 @@ def train_student_epoch(
 
 def distill_student(
     student: LightSTMLPStudent,
-    teacher: PyGTGNTeacher,
+    teacher: nn.Module,
     bundle: TemporalGraphBundle,
     train_loader: CandidateBatchLoader,
     validation_loader: CandidateBatchLoader,
@@ -1053,7 +1142,7 @@ def train_supervised_student(
     return best_state
 
 
-def freeze_teacher(teacher: PyGTGNTeacher) -> None:
+def freeze_teacher(teacher: nn.Module) -> None:
     teacher.eval()
     for parameter in teacher.parameters():
         parameter.requires_grad_(False)
@@ -1152,14 +1241,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             device,
         )
         print(f"Loaded teacher checkpoint: {args.teacher_checkpoint}")
-        if (
-            args.teacher_hidden != teacher.hidden_dim
-            or args.teacher_layers != teacher.teacher_layers
+        teacher_layers = getattr(teacher, "teacher_layers", None)
+        if args.teacher_hidden != teacher.hidden_dim or (
+            teacher_layers is not None and args.teacher_layers != teacher_layers
         ):
             print(
                 "Warning: loaded teacher config overrides CLI args: "
                 f"hidden_dim={teacher.hidden_dim} (arg {args.teacher_hidden}), "
-                f"teacher_layers={teacher.teacher_layers} "
+                f"teacher_layers={teacher_layers} "
                 f"(arg {args.teacher_layers})."
             )
         print_model_parameters("Teacher", teacher)
@@ -1190,7 +1279,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         save_model_checkpoint(
             student_path,
             student,
-            model_name="LightSTMLPStudent",
+            model_name=type(student).__name__,
             model_config={**student.model_config, "data_signature": data_signature},
             args=vars(args),
         )
@@ -1221,13 +1310,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         teacher.reset_state()
         replay_teacher(teacher, [train_loader, validation_loader], device)
         warmup_batches = 1 if args.quick else 5
+        # 只有 TGN 教师支持 update_memory；LightST 教师直接 forward。
+        teacher_forward_kwargs = (
+            {"update_memory": False}
+            if isinstance(teacher, PyGTGNTeacher)
+            else {}
+        )
         teacher_latency = benchmark_latency(
             teacher,
             test_loader,
             device,
             warmup_batches=warmup_batches,
             measured_batches=args.latency_batches,
-            forward_kwargs={"update_memory": False},
+            forward_kwargs=teacher_forward_kwargs,
         )
         student_latency = benchmark_latency(
             student,
@@ -1260,7 +1355,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         save_model_checkpoint(
             student_path,
             student,
-            model_name="LightSTMLPStudent",
+            model_name=type(student).__name__,
             model_config={**student.model_config, "data_signature": data_signature},
             args=vars(args),
         )

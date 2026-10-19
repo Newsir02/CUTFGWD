@@ -37,6 +37,8 @@ class LightSTMLPStudent(nn.Module):
         self.register_buffer("node_features", node_features.detach().clone().float())
         self.num_nodes = int(node_features.size(0))
         self.hidden_dim = hidden_dim
+        self.time_dim = time_dim
+        self.relation_dim = relation_dim
         self.relation_slots = relation_slots
         self.model_config = {
             "hidden_dim": hidden_dim,
@@ -145,6 +147,13 @@ class LightSTMLPStudent(nn.Module):
                 {
                     "relation_tokens": relation_tokens,
                     "relation_ages": slot_ages,
+                    # 固定槽表示全部有效；作为教师使用时需要该掩码。
+                    "relation_mask": torch.ones(
+                        source_state.size(0),
+                        self.relation_slots,
+                        dtype=torch.bool,
+                        device=source_state.device,
+                    ),
                     "relation_mass_logits": self.relation_mass_head(
                         relation_tokens
                     ).squeeze(-1),

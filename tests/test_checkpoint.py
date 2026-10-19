@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from dataset import build_synthetic_temporal_graph
-from model import PyGTGNTeacher
+from model import LightGNNStudent, PyGTGNTeacher
 from train import load_teacher_from_checkpoint
 from util.checkpoint import load_model_checkpoint, save_model_checkpoint
 
@@ -100,6 +100,50 @@ def test_checkpoint_reports_missing_file(tmp_path: Path) -> None:
             tmp_path / "missing.pt",
             expected_model_name="PyGTGNTeacher",
         )
+
+
+def test_teacher_loader_accepts_supervised_gnn_student(tmp_path: Path) -> None:
+    bundle = make_bundle()
+    features = torch.cat(
+        [
+            bundle.node_features.to(torch.float32),
+            bundle.structure_features.to(torch.float32),
+        ],
+        dim=-1,
+    )
+    model = LightGNNStudent(
+        node_features=features,
+        hidden_dim=8,
+        time_dim=4,
+        relation_dim=6,
+        relation_slots=3,
+        dropout=0.0,
+        num_blocks=1,
+        neighbors=3,
+    )
+    path = tmp_path / "gnn_teacher.pt"
+    save_model_checkpoint(
+        path,
+        model,
+        model_name="LightGNNStudent",
+        model_config={**model.model_config, "data_signature": "dataset-a"},
+        args={},
+    )
+
+    loaded = load_teacher_from_checkpoint(
+        path,
+        bundle=bundle,
+        data_signature="dataset-a",
+        device=torch.device("cpu"),
+    )
+
+    assert isinstance(loaded, LightGNNStudent)
+    assert loaded.hidden_dim == 8
+    assert loaded.relation_dim == 6
+    assert loaded.neighbors == 3
+    output = loaded(make_event_batch(), return_relations=True)
+    assert output["logits"].shape == (1, 2)
+    assert output["relation_mask"].all()
 
 
 def test_teacher_loader_rejects_a_different_data_signature(

@@ -39,7 +39,7 @@ def save_model_checkpoint(
 
 def load_model_checkpoint(
     path: str | Path,
-    expected_model_name: str,
+    expected_model_name: Optional[str] = None,
     expected_model_config: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """读取检查点并验证版本、模型类型和指定的配置字段。"""
@@ -62,7 +62,10 @@ def load_model_checkpoint(
             "Unsupported checkpoint format version: "
             f"{payload['format_version']}; expected {CHECKPOINT_FORMAT_VERSION}."
         )
-    if payload["model_name"] != expected_model_name:
+    if (
+        expected_model_name is not None
+        and payload["model_name"] != expected_model_name
+    ):
         raise ValueError(
             f"Checkpoint model is {payload['model_name']!r}; "
             f"expected {expected_model_name!r}."
