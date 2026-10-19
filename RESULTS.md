@@ -327,7 +327,22 @@ GNN 学生，basic 特征，dropout 0.3，全量 val；`logit=0.5, rank=0.5, div
 - **n=6 确认 OT 在 GNN 学生上显著有效**；`rel=0.5` 更稳（std 0.012，t≈5.5），`fa=0.5` 均值略高但方差大（一个 seed 达 0.5317）。
 - 推荐最终配方：**GNN + `relation_weight=0.5` + `diversity=0.01` + logit/rank 0.5 + `--ot-fast`**。
 
+## 表 20：跨数据集初测（tgbl-subreddit，GNN，dropout 0.3，seed 42）
+
+| 数据集 | sup | OT rel=0.5 | 教师 |
+|---|---|---|---|
+| tgbl-wiki（n=6） | 0.4662 | **0.4861（+0.020, t≈5.5）** | 0.6806 |
+| tgbl-subreddit（1 seed，教师 12 ep） | **0.6553** | 0.6531 | 0.6040 |
+
+- subreddit 的 **教师只训 12 epoch（test 0.6040）**，**弱于监督学生（0.6553）** → 蒸馏没有可学余量，结果**不可结论**（OT 持平）。
+- 说明：跨数据集要复现 OT 增益，**教师必须先训到显著强于学生**（wiki 的教师 0.68 > 学生 0.47；subreddit 需 50–100 epoch）。
+
+### 工程：数据下载已修好
+- 旧版 py-tgb 的数据 URL 已失效（bucket 迁移 → `NoSuchBucket`）。已在 `dataset/tgb_temporal.py` 内补丁到新地址（`object-arbutus.alliancecan.ca/swift/v1/...`），并支持下载 `tgbl-subreddit` 等旧版已知数据集。
+- 已成功下载并处理：`tgbl-coin`（22.8M 事件 / 638k 节点，过大）、`tgbl-subreddit`（672k 事件 / 10,984 节点）。
+- `tgbl-enron`/`tgbl-uci` 旧版 tgb 的**预处理无对应分支**，不可用（不改环境包）。
+
 ## 待办
-1. 在 tgbl-review / tgbl-coin 上验证泛化（需先下载数据并训练对应教师）。
+1. 在 **tgbl-subreddit** 上用**足够强的教师**（≥50 epoch，test 应 > 0.66）重跑 sup vs rel=0.5（3 seed）。
 2. 外部基线（GLNN/LLP）在同协议下对比。
 3. 图无关 MLP 若要提升，需换更强的输入特征或蒸馏目标。
