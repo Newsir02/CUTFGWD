@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 from torch import Tensor, nn
@@ -28,6 +28,7 @@ class PyGTGNTeacher(nn.Module):
         temporal_neighbors: int = 24,
         dropout: float = 0.1,
         teacher_layers: int = 1,
+        node_features: Optional[Tensor] = None,
     ) -> None:
         super().__init__()
         event_times = torch.as_tensor(event_times, dtype=torch.long).flatten()
@@ -69,6 +70,10 @@ class PyGTGNTeacher(nn.Module):
             "temporal_neighbors": temporal_neighbors,
             "teacher_layers": teacher_layers,
             "dropout": dropout,
+            "teacher_node_features": node_features is not None,
+            "node_feature_dim": (
+                int(node_features.size(1)) if node_features is not None else 0
+            ),
         }
 
         self.register_buffer(
@@ -97,6 +102,23 @@ class PyGTGNTeacher(nn.Module):
             torch.tensor(torch.iinfo(torch.long).min, dtype=torch.long),
             persistent=False,
         )
+        self.node_feature_projector: Optional[nn.Linear] = None
+        if node_features is not None:
+            node_features = torch.as_tensor(node_features, dtype=torch.float)
+            if node_features.dim() != 2 or node_features.size(0) != num_nodes:
+                raise ValueError(
+                    "teacher node_features must have shape [num_nodes, features]."
+                )
+            if node_features.size(1) == 0:
+                raise ValueError("teacher node_features must not be empty.")
+            self.register_buffer(
+                "node_features",
+                node_features.detach().clone(),
+                persistent=False,
+            )
+            self.node_feature_projector = nn.Linear(
+                int(node_features.size(1)), hidden_dim
+            )
 
         message_module = IdentityMessage(self.msg_dim, hidden_dim, time_dim)
         self.memory = TGNMemory(
@@ -355,6 +377,12 @@ class PyGTGNTeacher(nn.Module):
             device=node_ids.device,
         )
         local_memory, last_update = self.memory(node_ids)
+        if self.node_feature_projector is not None:
+            # 静态节点属性直接注入查询表示：TGN memory 本身不含节点属性，
+            # 在属性信息强的数据集上会限制教师容量。
+            local_memory = local_memory + self.node_feature_projector(
+                self.node_features[node_ids]
+            )
         edge_time = self.event_times[event_ids]
         edge_message = self.event_messages[event_ids]
         embeddings, edge_attributes, attention = self.gnn(

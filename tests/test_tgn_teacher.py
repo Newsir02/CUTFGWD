@@ -85,6 +85,40 @@ def test_teacher_can_stack_multiple_transformer_layers() -> None:
     assert output["logits"].shape == (1, 2)
 
 
+def test_teacher_can_inject_static_node_features() -> None:
+    node_features = torch.arange(15, dtype=torch.float).reshape(5, 3) / 10.0
+    teacher = PyGTGNTeacher(
+        event_times=torch.tensor([10, 20, 30, 40], dtype=torch.long),
+        event_messages=torch.arange(8, dtype=torch.float).reshape(4, 2) / 10.0,
+        num_nodes=5,
+        hidden_dim=8,
+        time_dim=4,
+        relation_dim=6,
+        temporal_neighbors=3,
+        dropout=0.0,
+        node_features=node_features,
+    ).eval()
+
+    assert teacher.model_config["teacher_node_features"] is True
+    assert teacher.model_config["node_feature_dim"] == 3
+    assert isinstance(teacher.node_feature_projector, torch.nn.Linear)
+    assert any(
+        name.startswith("node_feature_projector") for name in teacher.state_dict()
+    )
+    assert "node_features" not in teacher.state_dict()
+
+    output = teacher(make_batch(), update_memory=False)
+    assert output["logits"].shape == (1, 2)
+    assert torch.isfinite(output["logits"]).all()
+
+    plain = make_teacher()
+    assert plain.node_feature_projector is None
+    assert plain.model_config["teacher_node_features"] is False
+    assert not any(
+        name.startswith("node_feature_projector") for name in plain.state_dict()
+    )
+
+
 def test_teacher_scores_before_state_update() -> None:
     teacher = make_teacher().eval()
     batch = make_batch()

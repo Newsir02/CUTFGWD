@@ -72,6 +72,14 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
     parser.add_argument("--teacher-hidden", type=int, default=64)
     parser.add_argument("--teacher-layers", type=int, default=1)
+    parser.add_argument(
+        "--teacher-node-features",
+        action="store_true",
+        help=(
+            "把静态节点特征投影后注入 TGN 教师查询表示；"
+            "默认关闭以保持旧检查点与历史结果完全一致。"
+        ),
+    )
     parser.add_argument("--student-hidden", type=int, default=32)
     parser.add_argument(
         "--student-blocks",
@@ -391,6 +399,11 @@ def build_teacher(
         temporal_neighbors=args.temporal_neighbors,
         dropout=args.dropout,
         teacher_layers=args.teacher_layers,
+        node_features=(
+            bundle.node_features
+            if bool(getattr(args, "teacher_node_features", False))
+            else None
+        ),
     )
 
 
@@ -474,6 +487,11 @@ def load_teacher_from_checkpoint(
         temporal_neighbors=int(config["temporal_neighbors"]),
         dropout=float(config["dropout"]),
         teacher_layers=int(config.get("teacher_layers", 1)),
+        node_features=(
+            bundle.node_features
+            if bool(config.get("teacher_node_features", False))
+            else None
+        ),
     ).to(device)
     state = payload["model"]
     try:
