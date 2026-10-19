@@ -28,12 +28,43 @@ def _resolve_tgb_root_argument(root: str) -> str:
     )
 
 
+_TGB_DATA_BASE = (
+    "https://object-arbutus.alliancecan.ca/swift/v1/"
+    "14c95234f6cd4a21a47deafe20cce2a7/tgb"
+)
+
+
+def _patch_tgb_data_urls() -> None:
+    """修正旧版 py-tgb 中已失效的数据地址（对象存储 bucket 已迁移）。
+
+    旧地址 ``object-arbutus.cloud.computecanada.ca/tgb`` 已返回 NoSuchBucket；
+    新数据位于 alliancecan 的 swift 容器下。按 ``DATA_VERSION_DICT`` 生成
+    文件名：v1 无后缀，v>=2 为 ``<name>-v<ver>.zip``。
+    """
+
+    try:
+        import tgb.utils.info as info
+    except ImportError:
+        return
+    urls = getattr(info, "DATA_URL_DICT", None)
+    if not isinstance(urls, dict):
+        return
+    versions = getattr(info, "DATA_VERSION_DICT", {})
+    for dataset_name in list(urls):
+        version = int(versions.get(dataset_name, 1))
+        suffix = "" if version <= 1 else f"-v{version}"
+        urls[dataset_name] = (
+            f"{_TGB_DATA_BASE}/{dataset_name}{suffix}.zip"
+        )
+
+
 def _create_pyg_tgb_dataset(
     *,
     name: str,
     root: str,
     download: bool,
 ):
+    _patch_tgb_data_urls()
     try:
         from tgb.linkproppred.dataset_pyg import PyGLinkPropPredDataset
     except ImportError as exc:
