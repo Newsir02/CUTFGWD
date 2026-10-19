@@ -56,6 +56,25 @@ def _patch_tgb_data_urls() -> None:
         urls[dataset_name] = (
             f"{_TGB_DATA_BASE}/{dataset_name}{suffix}.zip"
         )
+    # 旧版 py-tgb 的元数据里没有这些较新的数据集；补齐以便跨数据集实验。
+    extras = {
+        "tgbl-enron": (1, "mrr", "hist_rnd"),
+        "tgbl-uci": (1, "mrr", "hist_rnd"),
+    }
+    metric_dict = getattr(info, "DATA_EVAL_METRIC_DICT", {})
+    strategy_dict = getattr(info, "DATA_NS_STRATEGY_DICT", {})
+    for dataset_name, (version, metric, strategy) in extras.items():
+        if dataset_name in urls:
+            continue
+        suffix = "" if version <= 1 else f"-v{version}"
+        urls[dataset_name] = (
+            f"{_TGB_DATA_BASE}/{dataset_name}{suffix}.zip"
+        )
+        versions.setdefault(dataset_name, version)
+        if isinstance(metric_dict, dict):
+            metric_dict.setdefault(dataset_name, metric)
+        if isinstance(strategy_dict, dict):
+            strategy_dict.setdefault(dataset_name, strategy)
 
 
 def _create_pyg_tgb_dataset(
