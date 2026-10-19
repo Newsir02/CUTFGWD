@@ -337,12 +337,32 @@ GNN 学生，basic 特征，dropout 0.3，全量 val；`logit=0.5, rank=0.5, div
 - subreddit 的 **教师只训 12 epoch（test 0.6040）**，**弱于监督学生（0.6553）** → 蒸馏没有可学余量，结果**不可结论**（OT 持平）。
 - 说明：跨数据集要复现 OT 增益，**教师必须先训到显著强于学生**（wiki 的教师 0.68 > 学生 0.47；subreddit 需 50–100 epoch）。
 
+## 表 21：跨数据集复核 —— 教师强度与 OT 收益（tgbl-subreddit）
+
+### 教师候选（官方 test MRR，全量 test）
+| 教师 | 配置 | 训练 | best val | test | 结论 |
+|---|---|---|---|---|---|
+| TGN | hidden 64, 1 layer, dropout 0.2 | 50 epoch | 0.6774 | 0.6215 | 仍弱于学生，失败 |
+| TGN + 静态节点特征 | hidden 128, 2 layers, time 32, dropout 0.2 | 27 epoch（停止让路） | 0.6827 | – | val 仍偏低，未跑 test |
+| **监督 GNN** | hidden 128, 2 blocks, 16 邻居 | 10 epoch（best 4） | **0.7095** | **0.6615**（复评 0.6640） | **达到 >0.66 目标** |
+
+### 3 seed 对比（教师 = 监督 GNN，dropout 0.3，`--eval-max-events 3000` 仅用于 val）
+| 配置 | s42 | s123 | s2024 | mean ± std | Δ vs sup |
+|---|---|---|---|---|---|
+| sup | 0.6531 | 0.6525 | 0.6545 | **0.6534 ± 0.0010** | – |
+| OT rel=0.5 | 0.6546 | 0.6500 | 0.6510 | 0.6519 ± 0.0024 | **−0.0015（ns）** |
+
+- 监督 GNN 教师只比学生高 **+0.008~0.011**（wiki 的教师高 **+0.21**）；**余量太小，OT 增益消失**（配对 Δ = +0.0015/−0.0025/−0.0035，mean −0.0015，std 0.0026）。
+- 与 wiki 的结论一致：**OT 收益依赖教师-学生之间的结构性余量**；教师不够强时，蒸馏无法凭空创造信息。TGN 在 subreddit 上即使加静态节点特征、扩大容量，val 仍低于监督 GNN（0.683 vs 0.710）。
+- 说明：表 20 是首轮教师过弱（0.604）；本表用达标的监督 GNN 教师复核后，结论从“不可结论”变为“**无余量时 OT 无增益**”。
+
 ### 工程：数据下载已修好
 - 旧版 py-tgb 的数据 URL 已失效（bucket 迁移 → `NoSuchBucket`）。已在 `dataset/tgb_temporal.py` 内补丁到新地址（`object-arbutus.alliancecan.ca/swift/v1/...`），并支持下载 `tgbl-subreddit` 等旧版已知数据集。
 - 已成功下载并处理：`tgbl-coin`（22.8M 事件 / 638k 节点，过大）、`tgbl-subreddit`（672k 事件 / 10,984 节点）。
 - `tgbl-enron`/`tgbl-uci` 旧版 tgb 的**预处理无对应分支**，不可用（不改环境包）。
 
 ## 待办
-1. 在 **tgbl-subreddit** 上用**足够强的教师**（≥50 epoch，test 应 > 0.66）重跑 sup vs rel=0.5（3 seed）。
-2. 外部基线（GLNN/LLP）在同协议下对比。
+1. ~~在 tgbl-subreddit 上用足够强的教师重跑 sup vs rel=0.5（3 seed）~~ 已完成（表 21）：教师 test 0.6615，但余量仅 ~0.01，OT 无增益。
+2. 若要在 subreddit 上验证 OT 的余量假设：改用**更小的学生**（如 hidden 16 / 4 邻居）或**更强的教师**，把教师-学生余量拉到 ≥0.02，再跑 3 seed。
+3. 外部基线（GLNN/LLP）在同协议下对比。
 3. 图无关 MLP 若要提升，需换更强的输入特征或蒸馏目标。

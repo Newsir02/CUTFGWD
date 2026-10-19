@@ -123,9 +123,14 @@ L = w_task·L_sup(CE)
 ### 3.4 结论
 1. **唯一稳健的大效应是"结构"**（GNN 比图无关 MLP 高 ~0.027）。
 2. **邻域特征对图无关 MLP 无可靠增益**。
-3. **OT / 关系 token / anchor / diversity / 嵌入级蒸馏均无可靠增益**；对弱学生甚至有害。
+3. **对图无关 MLP，OT / 关系 token / anchor / diversity / 嵌入级蒸馏均无可靠增益**；对弱学生甚至有害。**但在 GNN 学生上调小 OT 权重后显著有效（见 3.5）。**
 4. 图无关 MLP 天花板 ≈ **0.44–0.45**（GNN ≈ 0.47，教师 0.68）。
 5. **方法学教训**：任何 ~0.01 量级的结论都必须**配对多 seed + 先验降方差**，否则会被 seed 噪声误导。
+
+### 3.5 补充：GNN 上 OT 的 n=6 复核与跨数据集
+- **tgbl-wiki，GNN 学生，n=6**：sup 0.4662 ± 0.0061；OT `rel=0.5` **0.4861 ± 0.0117（+0.0199，t≈5.5）**；`fa=0.5` 0.4916 ± 0.0236（+0.0254，t≈2.8）。此前的 +0.006 是因为 OT 权重过大（`relation_weight=1.0`）。
+- **tgbl-subreddit**：TGN 教师训到 50 epoch 仍只有 test 0.6215（弱于监督学生 0.653）；改用监督 GNN 教师（hidden 128，test **0.6615**）后，3 seed 对比：sup **0.6534 ± 0.0010** vs OT rel=0.5 **0.6519 ± 0.0024**（Δ = −0.0015，ns）。
+- **结论**：OT 的收益依赖教师-学生之间的余量。wiki 的余量约 0.21，OT 显著；subreddit 余量仅约 0.01，OT 增益消失。这支持"OT 传递结构性关系知识"的解释，而非普适的性能提升。
 
 ---
 
@@ -197,6 +202,7 @@ L = w_task·L_sup(CE)
 | `run-d03.sh` / `run-basicd03.sh` | dropout 0.3 下的 OT 对比（nbr2 / basic） |
 | `run-gnn.sh` | GNN 学生的功效化 OT 测试 |
 | `run-embed.sh` | 特征级（嵌入）蒸馏 |
+| `run-xsub-gnntea.sh` | subreddit 跨数据集复核（强监督 GNN 教师，sup vs rel=0.5，3 seed） |
 
 ### 5.4 结果文件
 - 所有实验输出在服务器 `experiments/<批次>/<配置>.log`（`Student test: official_mrr=...`）。
