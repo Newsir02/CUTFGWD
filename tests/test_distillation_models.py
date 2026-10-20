@@ -3,7 +3,12 @@ from __future__ import annotations
 import torch
 
 from loss import CUTFGWDDistillation
-from model import LightSTMLPStudent, PyGTGNTeacher
+from model import (
+    HybridTeacher,
+    LightGNNStudent,
+    LightSTMLPStudent,
+    PyGTGNTeacher,
+)
 
 
 def make_event_batch() -> dict[str, torch.Tensor]:
@@ -67,6 +72,47 @@ def test_pyg_tgn_and_lightst_backpropagate_through_cutfgw() -> None:
         "diversity",
         "embed",
     }
+
+
+def test_hybrid_teacher_mixes_gnn_logits_and_tgn_relations() -> None:
+    node_features = torch.zeros(5, 3)
+    tgn = PyGTGNTeacher(
+        event_times=torch.tensor([10, 20, 30]),
+        event_messages=torch.zeros(3, 2),
+        num_nodes=5,
+        hidden_dim=8,
+        time_dim=4,
+        relation_dim=6,
+        temporal_neighbors=3,
+        dropout=0.0,
+    ).eval()
+    gnn = LightGNNStudent(
+        node_features,
+        hidden_dim=8,
+        time_dim=4,
+        relation_dim=6,
+        relation_slots=3,
+        dropout=0.0,
+        num_blocks=1,
+        neighbors=2,
+    ).eval()
+    hybrid = HybridTeacher(gnn, tgn)
+    batch = make_event_batch()
+
+    output = hybrid(batch, return_relations=True)
+
+    assert output["logits"].shape == (3, 3)
+    assert output["relation_tokens"].shape == (3, 3, 6)
+    assert output["relation_mask"].shape == (3, 3)
+    assert output["relation_mass"].shape == (3, 3)
+    assert torch.isfinite(output["logits"]).all()
+
+    hybrid.update_state(batch)
+    assert int(tgn.neighbor_loader.cur_e_id) == 3
+    assert int(gnn.neighbor_loader.cur_e_id) == 3
+    hybrid.reset_state()
+    assert int(tgn.neighbor_loader.cur_e_id) == 0
+    assert int(gnn.neighbor_loader.cur_e_id) == 0
 
 
 def test_embedding_distillation_backpropagates() -> None:

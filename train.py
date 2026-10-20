@@ -21,7 +21,12 @@ from loss import (
     masked_relation_mean,
     relation_alignment_loss,
 )
-from model import LightGNNStudent, LightSTMLPStudent, PyGTGNTeacher
+from model import (
+    HybridTeacher,
+    LightGNNStudent,
+    LightSTMLPStudent,
+    PyGTGNTeacher,
+)
 from util import (
     AverageMeter,
     RankingMetricAccumulator,
@@ -177,6 +182,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
 
     parser.add_argument("--teacher-checkpoint", type=str, default="")
+    parser.add_argument(
+        "--relation-teacher-checkpoint",
+        type=str,
+        default="",
+        help=(
+            "可选：额外加载一个 TGN 教师，仅取其时序关系 token；"
+            "logits 仍由 --teacher-checkpoint 提供（混合教师消融）。"
+        ),
+    )
     parser.add_argument("--output-dir", type=str, default="checkpoints")
     parser.add_argument("--latency-batches", type=int, default=20)
     parser.add_argument(
@@ -1240,6 +1254,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             data_signature,
             device,
         )
+        if args.relation_teacher_checkpoint:
+            relation_teacher = load_teacher_from_checkpoint(
+                args.relation_teacher_checkpoint,
+                bundle,
+                data_signature,
+                device,
+            )
+            teacher = HybridTeacher(teacher, relation_teacher).to(device)
+            print(
+                "Hybrid teacher: logits from "
+                f"{args.teacher_checkpoint}; relations from "
+                f"{args.relation_teacher_checkpoint}"
+            )
         print(f"Loaded teacher checkpoint: {args.teacher_checkpoint}")
         teacher_layers = getattr(teacher, "teacher_layers", None)
         if args.teacher_hidden != teacher.hidden_dim or (
