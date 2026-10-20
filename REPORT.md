@@ -129,8 +129,10 @@ L = w_task·L_sup(CE)
 
 ### 3.5 补充：GNN 上 OT 的 n=6 复核与跨数据集
 - **tgbl-wiki，GNN 学生，n=6**：sup 0.4662 ± 0.0061；OT `rel=0.5` **0.4861 ± 0.0117（+0.0199，t≈5.5）**；`fa=0.5` 0.4916 ± 0.0236（+0.0254，t≈2.8）。此前的 +0.006 是因为 OT 权重过大（`relation_weight=1.0`）。
-- **tgbl-subreddit**：TGN 教师训到 50 epoch 仍只有 test 0.6215（弱于监督学生 0.653）；改用监督 GNN 教师（hidden 128，test **0.6615**）后，3 seed 对比：sup **0.6534 ± 0.0010** vs OT rel=0.5 **0.6519 ± 0.0024**（Δ = −0.0015，ns）。
-- **结论**：OT 的收益依赖教师-学生之间的余量。wiki 的余量约 0.21，OT 显著；subreddit 余量仅约 0.01，OT 增益消失。这支持"OT 传递结构性关系知识"的解释，而非普适的性能提升。
+- **tgbl-subreddit 教师上限**：TGN 训到 50 epoch 仍只有 test 0.6215；TGN + 静态节点特征 val 0.683（未跑 test）；监督 GNN 教师 test **0.6615**（全量 val 复评 0.6639）。
+- **3 seed（h32 / 8 邻居）**：sup **0.6534 ± 0.0010** vs OT rel=0.5 **0.6519 ± 0.0024**（Δ = −0.0015，ns）。改为**全量 val** 选择后 sup 升至 0.6583，OT 0.6578（Δ = −0.0005）。
+- **余量控制**：把学生缩到 h16 / 4 邻居（余量 ~0.027），sup 0.6348 ± 0.0086 vs OT 0.6260 ± 0.0174（Δ = −0.0088，ns）；用"强 GNN logits + TGN 时序关系 token"的混合教师也无效（0.6256 ± 0.0113，Δ = −0.0092）。
+- **结论**：subreddit 的教师 test 上限约 0.664，学生已达 0.658，**真实余量只有 ~0.006**；人为制造 ~0.03 余量后 OT 仍无收益。OT 的正向结果目前只在 wiki 成立；跨数据集复现的前提是"教师显著强于学生"，而 subreddit 不满足该前提。
 
 ---
 
@@ -203,6 +205,9 @@ L = w_task·L_sup(CE)
 | `run-gnn.sh` | GNN 学生的功效化 OT 测试 |
 | `run-embed.sh` | 特征级（嵌入）蒸馏 |
 | `run-xsub-gnntea.sh` | subreddit 跨数据集复核（强监督 GNN 教师，sup vs rel=0.5，3 seed） |
+| `run-xsub-fullval.sh` | subreddit 全量 val 复核对（单 seed 探针） |
+| `run-xsub-small.sh` | subreddit 小学生在（h16 / 4 邻居，3 seed，余量控制） |
+| `run-xsub-hybrid.sh` | subreddit 混合教师（GNN logits + TGN 关系 token） |
 
 ### 5.4 结果文件
 - 所有实验输出在服务器 `experiments/<批次>/<配置>.log`（`Student test: official_mrr=...`）。
