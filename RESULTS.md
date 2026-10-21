@@ -379,5 +379,6 @@ GNN 学生，basic 特征，dropout 0.3，全量 val；`logit=0.5, rank=0.5, div
 1. ~~在 tgbl-subreddit 上用足够强的教师重跑 sup vs rel=0.5（3 seed）~~ 已完成（表 21）：教师 test 0.6615，但余量仅 ~0.01，OT 无增益。
 2. ~~在 subreddit 上制造 ≥0.02 余量再验证~~ 已完成（表 22）：h16/4 邻居 + 混合教师均无正收益；subreddit 教师上限 ~0.664，学生 0.658，余量不足。
 3. 若仍要跨数据集正向复现，候选仅剩 `tgbl-lastfm`（~1.3M 事件）或 `tgbl-review`（~4.9M）；需先训练 TGN 教师确认其显著强于学生，再投入 3 seed。
+   - 本轮尝试 lastfm 时被网络阻塞：zip 416 MB，官方对象存储对该服务器严重限速（单连接 ~15–20 KB/s，12 路并行仍频繁断流并反复重试），预计 >6 h，已放弃。代码与 URL 已验证可用（`_patch_tgb_data_urls` 指向新基址，`generate_processed_files` 支持 `tgbl-lastfm`）；换网络/镜像后可重试。
 4. 外部基线（GLNN/LLP）在同协议下对比。
 3. 图无关 MLP 若要提升，需换更强的输入特征或蒸馏目标。
