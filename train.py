@@ -20,6 +20,7 @@ from loss import (
     CUTFGWDDistillation,
     masked_relation_mean,
     relation_alignment_loss,
+    temporal_relational_drift_loss,
 )
 from model import (
     HybridTeacher,
@@ -100,6 +101,30 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--student-neighbors", type=int, default=8)
     parser.add_argument(
+        "--student-aggregation",
+        choices=("mean", "kernel"),
+        default="mean",
+        help=(
+            "GNN 学生的邻居聚合方式：mean=均匀均值（旧行为）；"
+            "kernel=内容/时间感知的单头注意力聚合，可被时序关系影响力蒸馏监督。"
+        ),
+    )
+    parser.add_argument(
+        "--student-kernel-hidden",
+        type=int,
+        default=32,
+        help="学生时序关系注意力模块的隐藏维度。",
+    )
+    parser.add_argument(
+        "--student-neighbor-store",
+        choices=("exact", "pyg"),
+        default="exact",
+        help=(
+            "邻居历史存储：exact=保留最近 K 条（修复 PyG 环形缓冲覆盖问题）；"
+            "pyg=PyG LastNeighborLoader，仅用于复现旧结果。"
+        ),
+    )
+    parser.add_argument(
         "--structure-features",
         action="store_true",
         default=None,
@@ -157,8 +182,74 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--teacher-relation-weight", type=float, default=None)
     parser.add_argument(
+        "--kernel-weight",
+        type=float,
+        default=None,
+        help=(
+            "时序关系影响力蒸馏权重：在共享历史事件支撑上对齐教师注意力质量"
+            "（教师的离散条件强度 / Hawkes 式影响核）。"
+        ),
+    )
+    parser.add_argument(
+        "--kernel-divergence",
+        choices=("kl", "js", "mse"),
+        default="kl",
+        help="影响力分布匹配的散度；mse 为 attention-transfer 式对照。",
+    )
+    parser.add_argument(
+        "--candidate-structure-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "候选间时间条件化相对结构蒸馏权重：对齐师生候选嵌入的成对余弦相似性分布。"
+        ),
+    )
+    parser.add_argument(
+        "--candidate-structure-temperature",
+        type=float,
+        default=1.0,
+        help="候选相对结构 softmax 的温度。",
+    )
+    parser.add_argument(
+        "--candidate-structure-divergence",
+        choices=("kl", "mse"),
+        default="kl",
+    )
+    parser.add_argument(
+        "--drift-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "时序关系演化（drift）蒸馏权重：对同一源节点跨 batch 的表示变化方向，"
+            "对齐学生与教师的关系表示一阶差分。"
+        ),
+    )
+    parser.add_argument(
+        "--drift-max-gap",
+        type=int,
+        default=512,
+        help="drift 对齐允许的最大事件间隔（event index 差）。",
+    )
+    parser.add_argument(
+        "--drift-randomize",
+        action="store_true",
+        help="对照组：打乱教师 drift 与样本的对应关系，只保留同量级正则。",
+    )
+    parser.add_argument(
+        "--pairwise-weight",
+        type=float,
+        default=0.0,
+        help="候选成对偏好（soft RankNet）蒸馏权重。",
+    )
+    parser.add_argument(
+        "--pairwise-temperature",
+        type=float,
+        default=1.0,
+        help="成对偏好目标的温度。",
+    )
+    parser.add_argument(
         "--method",
-        choices=("baseline", "anchor_ot"),
+        choices=("baseline", "anchor_ot", "trid"),
         default="baseline",
     )
     parser.add_argument("--student-seed", type=int, default=None)
@@ -182,6 +273,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
 
     parser.add_argument("--teacher-checkpoint", type=str, default="")
+    parser.add_argument(
+        "--teacher-query-neighbors",
+        type=int,
+        default=0,
+        help=(
+            "只改变教师最近邻队列长度（0=用 checkpoint 配置）；"
+            "用于让教师的打分支撑与学生一致（support-matched KD）。"
+        ),
+    )
     parser.add_argument(
         "--relation-teacher-checkpoint",
         type=str,
@@ -239,6 +339,29 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("ema-decay must be in [0, 1).")
     if args.student_neighbors <= 0:
         raise ValueError("student-neighbors must be positive.")
+    if int(getattr(args, "student_kernel_hidden", 1)) <= 0:
+        raise ValueError("student-kernel-hidden must be positive.")
+    kernel_weight = float(getattr(args, "kernel_weight", 0.0) or 0.0)
+    if kernel_weight < 0.0:
+        raise ValueError("kernel-weight must be non-negative.")
+    if kernel_weight > 0.0 and args.student_arch != "gnn":
+        raise ValueError("kernel distillation requires --student-arch gnn.")
+    if kernel_weight > 0.0 and args.student_aggregation != "kernel":
+        raise ValueError(
+            "kernel distillation requires --student-aggregation kernel."
+        )
+    if float(getattr(args, "candidate_structure_weight", 0.0)) < 0.0:
+        raise ValueError("candidate-structure-weight must be non-negative.")
+    if float(getattr(args, "candidate_structure_temperature", 1.0)) <= 0.0:
+        raise ValueError("candidate-structure-temperature must be positive.")
+    if float(getattr(args, "drift_weight", 0.0)) < 0.0:
+        raise ValueError("drift-weight must be non-negative.")
+    if int(getattr(args, "drift_max_gap", 1)) <= 0:
+        raise ValueError("drift-max-gap must be positive.")
+    if float(getattr(args, "pairwise_weight", 0.0)) < 0.0:
+        raise ValueError("pairwise-weight must be non-negative.")
+    if float(getattr(args, "pairwise_temperature", 1.0)) <= 0.0:
+        raise ValueError("pairwise-temperature must be positive.")
     if args.teacher_hidden % 2 != 0:
         raise ValueError("teacher-hidden must be even for TransformerConv heads.")
 
@@ -275,11 +398,24 @@ def apply_method_configuration(args: argparse.Namespace) -> None:
             args.anchor_weight = 0.5
         if args.teacher_relation_weight is None:
             args.teacher_relation_weight = 1.0
+        if args.kernel_weight is None:
+            args.kernel_weight = 0.0
+    elif args.method == "trid":
+        # Temporal Relational Influence Distillation：只新增影响力匹配项，
+        # 其余分量沿用显式传入的权重（runner 脚本会关闭 OT/anchor）。
+        if args.anchor_weight is None:
+            args.anchor_weight = 0.0
+        if args.teacher_relation_weight is None:
+            args.teacher_relation_weight = 1.0
+        if args.kernel_weight is None:
+            args.kernel_weight = 1.0
     else:
         if args.anchor_weight is None:
             args.anchor_weight = 0.0
         if args.teacher_relation_weight is None:
             args.teacher_relation_weight = 0.0
+        if args.kernel_weight is None:
+            args.kernel_weight = 0.0
     if args.structure_features is None:
         args.structure_features = args.method == "anchor_ot"
     args.structure_features = bool(args.structure_features)
@@ -425,6 +561,7 @@ def build_student(
     node_features: Tensor,
     args: argparse.Namespace,
     structure_features: Optional[Tensor] = None,
+    bundle: Optional[TemporalGraphBundle] = None,
 ) -> nn.Module:
     student_features = node_features
     if (
@@ -439,6 +576,13 @@ def build_student(
             ],
             dim=-1,
         )
+    event_times = None
+    time_span = None
+    if bundle is not None:
+        event_times = bundle.data.t
+        time_span = float(
+            (bundle.data.t[-1].double() - bundle.data.t[0].double()).clamp_min(1.0)
+        )
     if args.student_arch == "gnn":
         return LightGNNStudent(
             node_features=student_features,
@@ -449,6 +593,11 @@ def build_student(
             dropout=args.dropout,
             num_blocks=args.student_blocks,
             neighbors=args.student_neighbors,
+            aggregation=args.student_aggregation,
+            kernel_hidden=args.student_kernel_hidden,
+            event_times=event_times,
+            time_span=time_span,
+            neighbor_store=args.student_neighbor_store,
         )
     return LightSTMLPStudent(
         node_features=student_features,
@@ -491,6 +640,7 @@ def load_teacher_from_checkpoint(
     bundle: TemporalGraphBundle,
     data_signature: str,
     device: torch.device,
+    temporal_neighbors: Optional[int] = None,
 ) -> nn.Module:
     """加载 TGN 教师，或把监督训练的学生检查点当作教师复用。
 
@@ -535,7 +685,11 @@ def load_teacher_from_checkpoint(
             hidden_dim=int(config["hidden_dim"]),
             time_dim=int(config["time_dim"]),
             relation_dim=int(config["relation_dim"]),
-            temporal_neighbors=int(config["temporal_neighbors"]),
+            temporal_neighbors=int(
+                temporal_neighbors
+                if temporal_neighbors is not None
+                else config["temporal_neighbors"]
+            ),
             dropout=float(config["dropout"]),
             teacher_layers=int(config.get("teacher_layers", 1)),
             node_features=(
@@ -578,6 +732,15 @@ def load_teacher_from_checkpoint(
         if arch == "gnn":
             teacher = LightGNNStudent(
                 neighbors=int(config.get("student_neighbors", 8)),
+                aggregation=str(config.get("student_aggregation", "mean")),
+                kernel_hidden=int(config.get("student_kernel_hidden", 32)),
+                neighbor_store=str(config.get("student_neighbor_store", "pyg")),
+                event_times=bundle.data.t,
+                time_span=float(
+                    (bundle.data.t[-1].double() - bundle.data.t[0].double()).clamp_min(
+                        1.0
+                    )
+                ),
                 **common,
             )
         else:
@@ -895,6 +1058,11 @@ def train_student_epoch(
     grad_clip: float,
     ema_shadow: Optional[Dict[str, Tensor]] = None,
     ema_decay: float = 0.0,
+    drift_weight: float = 0.0,
+    drift_cache: Optional[dict] = None,
+    drift_max_gap: int = 512,
+    num_nodes: int = 0,
+    drift_randomize: bool = False,
 ) -> Dict[str, float]:
     student.train()
     teacher.eval()
@@ -902,7 +1070,9 @@ def train_student_epoch(
     need_teacher_relation = (
         objective.relation_weight != 0.0
         or objective.anchor_weight != 0.0
+        or getattr(objective, "kernel_weight", 0.0) != 0.0
         or getattr(objective, "embed_weight", 0.0) != 0.0
+        or drift_weight != 0.0
     )
     need_student_relation = (
         objective.relation_weight != 0.0
@@ -939,6 +1109,26 @@ def train_student_epoch(
             teacher_output,
             batch["target"],
         )
+        if drift_weight != 0.0:
+            if drift_cache is None:
+                raise ValueError("drift distillation requires a cache.")
+            if "source_embedding" not in teacher_output:
+                raise ValueError(
+                    "drift distillation requires a teacher with source_embedding."
+                )
+            drift = temporal_relational_drift_loss(
+                student_output["source_embeddings"],
+                teacher_output["source_embedding"],
+                batch["src"],
+                batch["event_index"],
+                drift_cache,
+                num_nodes=num_nodes,
+                max_gap=drift_max_gap,
+                randomize_teacher=drift_randomize,
+            )
+            total = total + drift_weight * drift
+            components = dict(components)
+            components["drift"] = drift.detach()
         total.backward()
         torch.nn.utils.clip_grad_norm_(student.parameters(), grad_clip)
         optimizer.step()
@@ -966,6 +1156,15 @@ def distill_student(
         diversity_weight=args.diversity_weight,
         anchor_weight=float(args.anchor_weight or 0.0),
         embed_weight=float(args.embed_weight or 0.0),
+        kernel_weight=float(args.kernel_weight or 0.0),
+        kernel_divergence=str(args.kernel_divergence),
+        candidate_structure_weight=float(args.candidate_structure_weight),
+        candidate_structure_temperature=float(
+            args.candidate_structure_temperature
+        ),
+        candidate_structure_divergence=str(args.candidate_structure_divergence),
+        pairwise_weight=float(args.pairwise_weight),
+        pairwise_temperature=float(args.pairwise_temperature),
         logit_temperature=args.logit_temperature,
         rank_temperature=args.rank_temperature,
         fused_alpha=args.fused_alpha,
@@ -988,10 +1187,13 @@ def distill_student(
     reset_student_state = getattr(student, "reset_state", None)
     ema_decay = float(getattr(args, "ema_decay", 0.0))
     ema_shadow = _make_ema(student, ema_decay)
+    drift_weight = float(getattr(args, "drift_weight", 0.0) or 0.0)
+    drift_cache: dict = {}
     for epoch in range(1, args.student_epochs + 1):
         teacher.reset_state()
         if callable(reset_student_state):
             reset_student_state()
+        drift_cache.clear()
         losses = train_student_epoch(
             student,
             teacher,
@@ -1002,6 +1204,11 @@ def distill_student(
             args.grad_clip,
             ema_shadow=ema_shadow,
             ema_decay=ema_decay,
+            drift_weight=drift_weight,
+            drift_cache=drift_cache,
+            drift_max_gap=int(getattr(args, "drift_max_gap", 512)),
+            num_nodes=int(bundle.node_features.size(0)),
+            drift_randomize=bool(getattr(args, "drift_randomize", False)),
         )
         if ema_shadow is not None:
             validation = _evaluate_state(
@@ -1033,6 +1240,10 @@ def distill_student(
             f"relation={losses['relation']:.4f} "
             f"diversity={losses['diversity']:.4f} "
             f"embed={losses['embed']:.4f} "
+            f"kernel={losses.get('kernel', 0.0):.4f} "
+            f"structure={losses.get('structure', 0.0):.4f} "
+            f"drift={losses.get('drift', 0.0):.4f} "
+            f"pairwise={losses.get('pairwise', 0.0):.4f} "
             f"val_{prefix}_{metric_name}={metric_value:.4f}"
         )
         improved, should_stop = stopper.update(metric_value, epoch)
@@ -1253,6 +1464,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             bundle,
             data_signature,
             device,
+            temporal_neighbors=(
+                args.teacher_query_neighbors
+                if int(getattr(args, "teacher_query_neighbors", 0)) > 0
+                else None
+            ),
         )
         if args.relation_teacher_checkpoint:
             relation_teacher = load_teacher_from_checkpoint(
@@ -1260,6 +1476,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 bundle,
                 data_signature,
                 device,
+                temporal_neighbors=(
+                    args.teacher_query_neighbors
+                    if int(getattr(args, "teacher_query_neighbors", 0)) > 0
+                    else None
+                ),
             )
             teacher = HybridTeacher(teacher, relation_teacher).to(device)
             print(
@@ -1291,7 +1512,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         # 学生独立种子：不影响已构造的数据/教师，仅控制学生初始化与 dropout。
         seed_everything(int(args.student_seed))
         freeze_teacher(teacher)
-        student = build_student(bundle.node_features, args, bundle.structure_features).to(device)
+        student = build_student(bundle.node_features, args, bundle.structure_features, bundle=bundle).to(device)
         print_model_parameters("Student", student)
         distill_student(
             student,
@@ -1368,7 +1589,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     if args.stage == "student":
         seed_everything(int(args.student_seed))
-        student = build_student(bundle.node_features, args, bundle.structure_features).to(device)
+        student = build_student(bundle.node_features, args, bundle.structure_features, bundle=bundle).to(device)
         print_model_parameters("Student", student)
         train_supervised_student(
             student,

@@ -290,6 +290,12 @@ class PyGTGNTeacher(nn.Module):
                 "relation_ages": ages,
                 "relation_mask": mask,
                 "relation_mass": mass,
+                "relation_event_ids": torch.full(
+                    (batch_size, slots),
+                    -1,
+                    dtype=torch.long,
+                    device=local_memory.device,
+                ),
             }
 
         edge_tokens = self.relation_projector(
@@ -336,6 +342,11 @@ class PyGTGNTeacher(nn.Module):
             torch.zeros_like(positions),
         )
         edge_selection = order[safe_positions]
+        selected_event_ids = torch.where(
+            slot_mask,
+            event_ids[edge_selection],
+            torch.full_like(edge_selection, -1),
+        )
         tokens = edge_tokens[edge_selection] * slot_mask.unsqueeze(-1).to(
             edge_tokens.dtype
         )
@@ -360,6 +371,7 @@ class PyGTGNTeacher(nn.Module):
             "relation_ages": ages,
             "relation_mask": mask,
             "relation_mass": mass,
+            "relation_event_ids": selected_event_ids,
         }
 
     def score_candidates(
@@ -401,7 +413,9 @@ class PyGTGNTeacher(nn.Module):
             "logits": self.link_predictor(
                 expanded_source.reshape(-1, self.hidden_dim),
                 candidate_embedding.reshape(-1, self.hidden_dim),
-            ).reshape_as(candidates)
+            ).reshape_as(candidates),
+            # 时间条件化的候选嵌入：用于候选间相对结构蒸馏。
+            "candidate_embedding": candidate_embedding,
         }
         if return_relations:
             output.update(

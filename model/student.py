@@ -84,10 +84,13 @@ class LightSTMLPStudent(nn.Module):
         )
         self.relation_mass_head = nn.Linear(relation_dim, 1)
 
-    def _encode_nodes(self, node_ids: Tensor) -> Tensor:
+    def _base_encode(self, node_ids: Tensor) -> Tensor:
         return self.node_encoder(self.node_features[node_ids]) + self.node_embeddings(
             node_ids
         )
+
+    def _encode_nodes(self, node_ids: Tensor) -> Tensor:
+        return self._base_encode(node_ids)
 
     def _apply_temporal_blocks(self, states: Tensor) -> Tensor:
         for block in self.temporal_blocks:
@@ -101,25 +104,12 @@ class LightSTMLPStudent(nn.Module):
         normalized_ages = 1.0 - centers / gaps.sum()
         return normalized_ages.unsqueeze(0).expand(batch_size, -1)
 
-    def forward(
+    def _run_heads(
         self,
-        batch: Dict[str, Tensor],
+        source_state: Tensor,
+        candidate_state: Tensor,
         return_relations: bool = True,
     ) -> Dict[str, Tensor]:
-        # 此处有意只读取三个图无关字段，历史图内容不会影响学生推理。
-        source_ids = batch["src"]
-        candidate_ids = batch["candidates"]
-        timestamps = batch["timestamp"]
-        all_nodes = torch.cat([source_ids.reshape(-1), candidate_ids.reshape(-1)])
-        if bool((all_nodes < 0).any()) or bool((all_nodes >= self.num_nodes).any()):
-            raise ValueError("Student batch contains an out-of-range node id.")
-
-        time_state = self.time_projection(self.time_encoder(timestamps))
-        source_state = self._encode_nodes(source_ids) + time_state
-        candidate_state = self._encode_nodes(candidate_ids) + time_state.unsqueeze(1)
-        source_state = self._apply_temporal_blocks(source_state)
-        candidate_state = self._apply_temporal_blocks(candidate_state)
-
         source_expanded = source_state.unsqueeze(1).expand_as(candidate_state)
         score_inputs = torch.cat(
             [
@@ -133,6 +123,10 @@ class LightSTMLPStudent(nn.Module):
         outputs = {"logits": self.score_head(score_inputs).squeeze(-1)}
         # 供特征级（嵌入）蒸馏使用：独立的投影表示（不参与打分）。
         outputs["embed_projected"] = self.embed_projector(source_state)
+        # 时间条件化的候选表示：供候选间相对结构蒸馏。
+        outputs["candidate_embeddings"] = candidate_state
+        # 源节点的时序关系表示：供关系演化（drift）蒸馏。
+        outputs["source_embeddings"] = source_state
 
         if return_relations:
             slot_ages = self._ordered_slot_ages(source_state.size(0))
@@ -160,3 +154,23 @@ class LightSTMLPStudent(nn.Module):
                 }
             )
         return outputs
+
+    def forward(
+        self,
+        batch: Dict[str, Tensor],
+        return_relations: bool = True,
+    ) -> Dict[str, Tensor]:
+        # 此处有意只读取三个图无关字段，历史图内容不会影响学生推理。
+        source_ids = batch["src"]
+        candidate_ids = batch["candidates"]
+        timestamps = batch["timestamp"]
+        all_nodes = torch.cat([source_ids.reshape(-1), candidate_ids.reshape(-1)])
+        if bool((all_nodes < 0).any()) or bool((all_nodes >= self.num_nodes).any()):
+            raise ValueError("Student batch contains an out-of-range node id.")
+
+        time_state = self.time_projection(self.time_encoder(timestamps))
+        source_state = self._encode_nodes(source_ids) + time_state
+        candidate_state = self._encode_nodes(candidate_ids) + time_state.unsqueeze(1)
+        source_state = self._apply_temporal_blocks(source_state)
+        candidate_state = self._apply_temporal_blocks(candidate_state)
+        return self._run_heads(source_state, candidate_state, return_relations)

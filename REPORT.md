@@ -134,6 +134,43 @@ L = w_task·L_sup(CE)
 - **余量控制**：把学生缩到 h16 / 4 邻居（余量 ~0.027），sup 0.6348 ± 0.0086 vs OT 0.6260 ± 0.0174（Δ = −0.0088，ns）；用"强 GNN logits + TGN 时序关系 token"的混合教师也无效（0.6256 ± 0.0113，Δ = −0.0092）。
 - **结论**：subreddit 的教师 test 上限约 0.664，学生已达 0.658，**真实余量只有 ~0.006**；人为制造 ~0.03 余量后 OT 仍无收益。OT 的正向结果目前只在 wiki 成立；跨数据集复现的前提是"教师显著强于学生"，而 subreddit 不满足该前提。
 
+### 3.6 方向调整（2026-10）：TGN → 轻量 GNN 的时序关系蒸馏
+
+> 本节是新一轮研究（教师 TGN → 学生 1 层 GNN）的结论。完整方法/文献/实验见
+> [`docs/TRKD.md`](docs/TRKD.md)，细粒度结果见 `RESULTS.md` 表 23–26。
+
+**协议**：`tgbl-wiki`，full val 早停，官方 test MRR，配对 seed 42–47；教师
+`checkpoints/wiki-tgn/teacher.pt`（test≈0.658）；学生 hidden 32 / 2 residual blocks /
+K=8 / dropout 0.3 / 20 epochs；默认 exact 邻居存储。
+
+| 方法 | mean ± std | 相对 sup |
+|---|---|---|
+| 监督（GNN，mean pooling） | 0.4520 ± 0.0199（n=6） | – |
+| KD（logit+rank，kernel 聚合） | 0.4953 ± 0.0216（n=9） | **+0.043（n=6，t≈3.85）** |
+| CUT-FGW OT + kernel 学生 | 0.5033 ± 0.0229（n=9） | **+0.051（n=9 均值差）** |
+
+- **OT + 时序注意力学生** 与 **KD** 都显著优于 sup；但 **OT+kernel 相对 KD 仅 +0.008
+  （n=9，t≈1.49，不显著）**。n=6 的 +0.014（t≈3.05）未能在新 seed 48–50 上复现
+  （s48 0.4895 vs KD 0.5052；s50 0.4932 vs 0.5086）。
+  因此**不能宣称 OT+kernel 稳定优于 KD**；OT 名义均值略高但计算显著更贵。
+- 组合的机制假设：kernel 学生把邻居聚合权重放到**打分路径**；OT 迁移教师关系 token 的二阶结构；
+  单独 kernel（0.475）与单独 KD 都不如组合，但协同效应 ~0.008，低于 seed 噪声，证据不足。
+- **工程发现**：PyG `LastNeighborLoader` 在单 batch 度 > K 时会保留错误的“最近 K 条”；
+  wiki 上 K=8 学生与教师支撑一致率仅 **77%**，修复后 **99.8%**。exact 支撑使 KD 在 s42
+  从 0.5139 → 0.5247。
+- **负结果（均有机制解释）**：
+  - **TRID（教师邻居注意力质量）**：稳定为负/不显著。诊断显示注意力熵与教师 MRR
+    **正相关（overall +0.368；成熟历史内 +0.151）**——注意力越集中，教师越容易错；
+    不能把注意力质量当作关系知识。kernel-only 0.4706 < sup 0.4771。
+  - **TRSD（候选嵌入两两结构）**：+0.005（ns）。
+  - **TRDD（源表示 drift）**：n=6 配对 +0.0060（t≈0.50），s46 有 −0.052 的灾难 seed；
+    随机 drift 对照 0.5180 < 真实 0.5409（s42），说明方向含信息但不稳定。
+  - **PRKD（候选成对偏好）**：s42 有 +0.02，但 s43/s44 转负，不稳健。
+  - **绝对嵌入 KD**：0.4653（显著有害）；**支撑截断到 K=8/12**：未超过 K=24 KD。
+- **结论**：在连续时间链路预测上，**候选级关系（logit/rank）与关系 token 结构（OT）**
+  是可迁移的时序关系知识；**邻居注意力质量、候选结构、表示 drift** 不是可靠目标。
+  OT+attention 是当前最优组合，但其 test 增益大于 val 增益（长时段泛化），仍需跨数据集确认。
+
 ---
 
 ## 4. 参考论文
@@ -161,6 +198,14 @@ L = w_task·L_sup(CE)
 - KD — *Distilling the Knowledge in a Neural Network*，Hinton et al.，**arXiv:1503.02531**。
 - FitNet — *FitNets: Hints for Thin Deep Nets*，Romero et al.，**arXiv:1412.6550**（提示/特征级蒸馏；对应 `L_embed`）。
 - SGC — *Simplifying Graph Convolutional Networks*，Wu et al.，**arXiv:1902.07153**（一次预计算多跳传播；`nbr*` 的依据）。
+
+**关系蒸馏 / 时序蒸馏（2026-10 新增）**
+- RKD — *Relational Knowledge Distillation*，Park et al.，**arXiv:1904.05068**（距离/角度关系蒸馏；候选结构 TRSD 的依据）。
+- Attention Transfer — *Paying More Attention to Attention*，Zagoruyko & Komodakis，**arXiv:1612.03928**（教师注意力匹配；TRID 的对照来源）。
+- LightST — *Efficient Traffic Prediction Through Spatio-Temporal Distillation*，Zhang et al.，**arXiv:2501.10459**（时空 GNN→MLP KD；学生架构来源）。
+- EasyST — *A Simple Framework for Spatio-Temporal Prediction*，Tang et al.，**arXiv:2409.06748**（时空 GNN→MLP KD）。
+- LLP — 见上（候选级 rank/distribution 关系蒸馏；`L_rank` 的依据）。
+- Transformer Hawkes Process — Zuo et al.，**arXiv:2002.09291**（时序影响核/条件强度的理论类比）。
 
 ---
 

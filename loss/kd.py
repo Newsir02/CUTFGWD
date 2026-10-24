@@ -167,3 +167,259 @@ def relation_slot_diversity_loss(slots: Tensor) -> Tensor:
     off_diagonal = 1.0 - identity
     denominator = slots.size(0) * off_diagonal.sum().clamp_min(1.0)
     return ((similarities * off_diagonal) ** 2).sum() / denominator
+
+
+def candidate_relation_structure_loss(
+    student_embeddings: Tensor,
+    teacher_embeddings: Tensor,
+    temperature: float = 1.0,
+    divergence: str = "kl",
+) -> Tensor:
+    """Distill time-conditioned relative similarity among candidates.
+
+    Candidate embeddings produced by a temporal GNN encode each candidate's
+    relation to the evolving stream.  Their pairwise cosine geometry is
+    invariant to rotations/scaling and to the teacher/student hidden
+    dimensions, so it can be compared directly.  Matching the row-wise
+    similarity distribution transfers *relative* relational structure, which
+    scalar logits only partially constrain.
+    """
+
+    if divergence not in {"kl", "mse"}:
+        raise ValueError("candidate structure divergence must be kl or mse.")
+    if student_embeddings.size(1) < 2:
+        return student_embeddings.sum() * 0.0
+    if temperature <= 0.0:
+        raise ValueError("candidate structure temperature must be positive.")
+    student = F.normalize(student_embeddings, p=2, dim=-1, eps=1.0e-8)
+    teacher = F.normalize(teacher_embeddings.detach(), p=2, dim=-1, eps=1.0e-8)
+    student_similarity = torch.bmm(student, student.transpose(1, 2))
+    teacher_similarity = torch.bmm(teacher, teacher.transpose(1, 2))
+    count = student_embeddings.size(1)
+    off_diagonal = 1.0 - torch.eye(
+        count, device=student_similarity.device, dtype=student_similarity.dtype
+    ).unsqueeze(0)
+    if divergence == "mse":
+        difference = (student_similarity - teacher_similarity) * off_diagonal
+        return difference.square().sum(dim=(1, 2)).div(
+            (off_diagonal.sum(dim=(1, 2))).clamp_min(1.0)
+        ).mean()
+    teacher_logits = (teacher_similarity / temperature).masked_fill(
+        off_diagonal == 0.0, -1.0e9
+    )
+    student_logits = (student_similarity / temperature).masked_fill(
+        off_diagonal == 0.0, -1.0e9
+    )
+    teacher_probability = torch.softmax(teacher_logits, dim=-1)
+    student_log_probability = torch.log_softmax(student_logits, dim=-1)
+    kl = (
+        teacher_probability
+        * (
+            teacher_probability.clamp_min(1.0e-12).log()
+            - student_log_probability
+        )
+    )
+    return kl.sum(dim=-1).mean()
+
+
+def temporal_relational_drift_loss(
+    student_source: Tensor,
+    teacher_source: Tensor,
+    source_ids: Tensor,
+    event_index: Tensor,
+    cache: dict,
+    num_nodes: int,
+    max_gap: int = 512,
+    eps: float = 1.0e-6,
+    randomize_teacher: bool = False,
+) -> Tensor:
+    """Match the *direction of change* of the source's relation representation.
+
+    For a source that recurs across batches, the teacher's source embedding
+    moves as its memory/neighbourhood evolves.  Its first difference is the
+    relational drift.  Aligning the student's drift direction transfers the
+    dynamics of the relation representation, not just a single snapshot.
+
+    ``cache`` is a mutable dict owned by the training loop; it stores the last
+    teacher/student source embedding, the last event index and validity per
+    node.  It must be reset at the start of every epoch.
+    """
+
+    if student_source.shape != teacher_source.shape:
+        raise ValueError(
+            "drift distillation requires equal student/teacher source dims: "
+            f"{student_source.shape[-1]} vs {teacher_source.shape[-1]}."
+        )
+    teacher_source = teacher_source.detach()
+    source_ids = source_ids.long()
+    event_index = event_index.long()
+    if "teacher" not in cache:
+        dim = int(student_source.size(-1))
+        cache["teacher"] = student_source.new_zeros(num_nodes, dim)
+        cache["student"] = student_source.new_zeros(num_nodes, dim)
+        cache["event"] = torch.full(
+            (num_nodes,), -1, dtype=torch.long, device=source_ids.device
+        )
+        cache["valid"] = torch.zeros(
+            num_nodes, dtype=torch.bool, device=source_ids.device
+        )
+
+    previous_teacher = cache["teacher"][source_ids]
+    previous_student = cache["student"][source_ids]
+    previous_event = cache["event"][source_ids]
+    gap = event_index - previous_event
+    valid = (
+        cache["valid"][source_ids]
+        & (gap > 0)
+        & (gap <= int(max_gap))
+    )
+    teacher_drift = teacher_source - previous_teacher
+    if randomize_teacher and teacher_drift.size(0) > 1:
+        # Control: keep the same drift magnitudes but break the source-wise
+        # correspondence between the teacher direction and the student row.
+        teacher_drift = teacher_drift[torch.randperm(teacher_drift.size(0), device=teacher_drift.device)]
+    student_drift = student_source - previous_student
+    teacher_norm = teacher_drift.norm(dim=-1)
+    student_norm = student_drift.norm(dim=-1)
+    valid = valid & (teacher_norm > eps) & (student_norm > eps)
+    if bool(valid.any()):
+        cosine = F.cosine_similarity(
+            student_drift[valid], teacher_drift[valid], dim=-1, eps=1.0e-8
+        )
+        loss = (1.0 - cosine).mean()
+    else:
+        loss = student_source.sum() * 0.0
+
+    # Update the cache with the last occurrence of each source in this batch.
+    unique, inverse = torch.unique(source_ids, return_inverse=True)
+    last_position = torch.full(
+        (unique.numel(),), -1, dtype=torch.long, device=source_ids.device
+    )
+    positions = torch.arange(source_ids.numel(), device=source_ids.device)
+    last_position.scatter_reduce_(0, inverse, positions, reduce="amax")
+    cache["teacher"][unique] = teacher_source.detach()[last_position]
+    cache["student"][unique] = student_source.detach()[last_position]
+    cache["event"][unique] = event_index[last_position]
+    cache["valid"][unique] = True
+    return loss
+
+
+def pairwise_relation_kd_loss(
+    student_logits: Tensor,
+    teacher_logits: Tensor,
+    temperature: float = 1.0,
+) -> Tensor:
+    """Pairwise relational KD over candidates (soft RankNet).
+
+    Instead of matching the full softmax, this matches the teacher's *pairwise
+    preferences* between candidates with a logistic loss.  The target is a
+    soft preference ``sigmoid((z_T_i - z_T_j) / temperature)``, which is
+    invariant to per-event shifts and less sensitive to calibration than KL.
+    """
+
+    if student_logits.size(-1) < 2:
+        return student_logits.sum() * 0.0
+    if temperature <= 0.0:
+        raise ValueError("pairwise temperature must be positive.")
+    teacher_logits = teacher_logits.detach()
+    student_difference = (
+        student_logits.unsqueeze(-1) - student_logits.unsqueeze(-2)
+    ) / temperature
+    teacher_difference = (
+        teacher_logits.unsqueeze(-1) - teacher_logits.unsqueeze(-2)
+    ) / temperature
+    target = torch.sigmoid(teacher_difference)
+    count = student_logits.size(-1)
+    off_diagonal = 1.0 - torch.eye(
+        count, device=student_logits.device, dtype=student_logits.dtype
+    ).unsqueeze(0)
+    loss = F.binary_cross_entropy_with_logits(
+        student_difference,
+        target,
+        reduction="none",
+    )
+    return (loss * off_diagonal).sum(dim=(1, 2)).div(
+        off_diagonal.sum(dim=(1, 2)).clamp_min(1.0)
+    ).mean()
+
+
+def temporal_kernel_distillation_loss(
+    student_mass: Tensor,
+    student_event_ids: Tensor,
+    student_mask: Tensor,
+    teacher_mass: Tensor,
+    teacher_event_ids: Tensor,
+    teacher_mask: Tensor,
+    divergence: str = "kl",
+) -> Tensor:
+    """Match the teacher's temporal influence distribution on shared support.
+
+    Teacher and student observe the same event stream, so the historical
+    interaction support is *known*: instead of estimating a transport plan
+    between two unrelated token sets, we look up the teacher's mass for the
+    exact event ids used by the student and compare the two conditional
+    distributions.  This turns relation distillation into a direct
+    distribution-matching problem over the teacher's temporal influence
+    operator (a discrete conditional intensity / Hawkes-style kernel).
+
+    Args:
+        student_mass: ``[B, K]`` normalised student influence weights.
+        student_event_ids: ``[B, K]`` event ids of the student support (-1 pad).
+        student_mask: ``[B, K]`` valid student slots.
+        teacher_mass: ``[B, N]`` normalised teacher attention mass.
+        teacher_event_ids: ``[B, N]`` event ids of the teacher support.
+        teacher_mask: ``[B, N]`` valid teacher slots.
+        divergence: ``kl``, ``js`` or ``mse`` (attention-transfer style control).
+    """
+
+    if divergence not in {"kl", "js", "mse"}:
+        raise ValueError("divergence must be one of: kl, js, mse.")
+    student_mask = student_mask.bool()
+    teacher_mask = teacher_mask.bool()
+    if not bool(student_mask.any()) or not bool(teacher_mask.any()):
+        return student_mass.sum() * 0.0
+    if student_event_ids.shape != student_mass.shape:
+        raise ValueError("student_event_ids must match student_mass shape.")
+    if teacher_event_ids.shape != teacher_mass.shape:
+        raise ValueError("teacher_event_ids must match teacher_mass shape.")
+
+    # [B, K, N] exact-support match. Teacher ids are unique within a row, so
+    # summing matched masses is equivalent to a lookup.
+    matched = (
+        student_event_ids.unsqueeze(-1) == teacher_event_ids.unsqueeze(-2)
+    )
+    matched = (
+        matched
+        & teacher_mask.unsqueeze(-2)
+        & student_mask.unsqueeze(-1)
+    )
+    teacher_target = (
+        teacher_mass.unsqueeze(-2)
+        * matched.to(teacher_mass.dtype)
+    ).sum(dim=-1)
+    student_target = student_mass * matched.any(dim=-1).to(student_mass.dtype)
+
+    teacher_total = teacher_target.sum(dim=-1, keepdim=True)
+    student_total = student_target.sum(dim=-1, keepdim=True)
+    valid = (teacher_total.squeeze(-1) > 1.0e-8) & (
+        student_total.squeeze(-1) > 1.0e-8
+    )
+    if not bool(valid.any()):
+        return student_mass.sum() * 0.0
+    teacher_probability = teacher_target[valid] / teacher_total[valid]
+    student_probability = student_target[valid] / student_total[valid]
+    log_teacher = teacher_probability.clamp_min(1.0e-12).log()
+    log_student = student_probability.clamp_min(1.0e-12).log()
+    if divergence == "kl":
+        loss = (teacher_probability * (log_teacher - log_student)).sum(dim=-1)
+    elif divergence == "js":
+        mixture = 0.5 * (teacher_probability + student_probability)
+        log_mixture = mixture.clamp_min(1.0e-12).log()
+        loss = 0.5 * (
+            (teacher_probability * (log_teacher - log_mixture)).sum(dim=-1)
+            + (student_probability * (log_student - log_mixture)).sum(dim=-1)
+        )
+    else:
+        loss = (teacher_probability - student_probability).square().sum(dim=-1)
+    return loss.mean()
+

@@ -77,5 +77,10 @@ def test_student_requires_only_graph_free_query_fields() -> None:
 
     output = model(graph_free_batch, return_relations=False)
 
-    assert set(output) == {"logits", "embed_projected"}
+    assert set(output) == {
+        "logits",
+        "embed_projected",
+        "candidate_embeddings",
+        "source_embeddings",
+    }
     assert torch.isfinite(output["logits"]).all()

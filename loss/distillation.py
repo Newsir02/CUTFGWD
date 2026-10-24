@@ -8,10 +8,13 @@ from torch.nn import functional as F
 from .cutfgw import CausalUnbalancedTemporalFGW
 from .kd import (
     anchor_relation_loss,
+    candidate_relation_structure_loss,
     logit_kd_loss,
+    pairwise_relation_kd_loss,
     rank_wasserstein_loss,
     relation_alignment_loss,
     relation_slot_diversity_loss,
+    temporal_kernel_distillation_loss,
 )
 
 
@@ -27,6 +30,13 @@ class CUTFGWDDistillation(nn.Module):
         diversity_weight: float = 0.01,
         anchor_weight: float = 0.0,
         embed_weight: float = 0.0,
+        kernel_weight: float = 0.0,
+        kernel_divergence: str = "kl",
+        candidate_structure_weight: float = 0.0,
+        candidate_structure_temperature: float = 1.0,
+        candidate_structure_divergence: str = "kl",
+        pairwise_weight: float = 0.0,
+        pairwise_temperature: float = 1.0,
         logit_temperature: float = 2.0,
         rank_temperature: float = 1.0,
         **cutfgw_kwargs: float,
@@ -39,6 +49,13 @@ class CUTFGWDDistillation(nn.Module):
         self.diversity_weight = diversity_weight
         self.anchor_weight = anchor_weight
         self.embed_weight = embed_weight
+        self.kernel_weight = kernel_weight
+        self.kernel_divergence = kernel_divergence
+        self.candidate_structure_weight = candidate_structure_weight
+        self.candidate_structure_temperature = candidate_structure_temperature
+        self.candidate_structure_divergence = candidate_structure_divergence
+        self.pairwise_weight = pairwise_weight
+        self.pairwise_temperature = pairwise_temperature
         self.logit_temperature = logit_temperature
         self.rank_temperature = rank_temperature
         self.relation_loss = CausalUnbalancedTemporalFGW(**cutfgw_kwargs)
@@ -128,6 +145,62 @@ class CUTFGWDDistillation(nn.Module):
         else:
             embed = zero
 
+        # Temporal Relational Influence Distillation：在共享事件支撑上对齐教师
+        # 对历史交互的注意力质量，即对齐其条件时序影响强度（Hawkes 式核）。
+        if self.kernel_weight != 0.0:
+            if "kernel_mass" not in student_output:
+                raise ValueError(
+                    "kernel distillation requires a student with kernel aggregation."
+                )
+            if "relation_event_ids" not in teacher_output:
+                raise ValueError(
+                    "kernel distillation requires a teacher exposing relation_event_ids."
+                )
+            kernel = temporal_kernel_distillation_loss(
+                student_output["kernel_mass"],
+                student_output["kernel_event_ids"],
+                student_output["kernel_mask"],
+                teacher_output["relation_mass"],
+                teacher_output["relation_event_ids"],
+                teacher_output["relation_mask"],
+                divergence=self.kernel_divergence,
+            )
+        else:
+            kernel = zero
+
+        # Pairwise relational KD：对齐候选之间的成对偏好关系。
+        if self.pairwise_weight != 0.0:
+            pairwise = pairwise_relation_kd_loss(
+                student_output["logits"],
+                teacher_output["logits"],
+                self.pairwise_temperature,
+            )
+        else:
+            pairwise = zero
+
+        # Candidate relational structure：对齐教师候选嵌入的时间条件化相对相似性。
+        if self.candidate_structure_weight != 0.0:
+            if "candidate_embeddings" not in student_output:
+                raise ValueError(
+                    "candidate structure distillation requires student candidate_embeddings."
+                )
+            if "candidate_embedding" in teacher_output:
+                teacher_candidates = teacher_output["candidate_embedding"]
+            elif "candidate_embeddings" in teacher_output:
+                teacher_candidates = teacher_output["candidate_embeddings"]
+            else:
+                raise ValueError(
+                    "candidate structure distillation requires teacher candidate_embedding."
+                )
+            structure = candidate_relation_structure_loss(
+                student_output["candidate_embeddings"],
+                teacher_candidates,
+                temperature=self.candidate_structure_temperature,
+                divergence=self.candidate_structure_divergence,
+            )
+        else:
+            structure = zero
+
         total = (
             self.task_weight * task
             + self.logit_weight * logit
@@ -136,6 +209,9 @@ class CUTFGWDDistillation(nn.Module):
             + self.relation_weight * relation
             + self.diversity_weight * diversity
             + self.embed_weight * embed
+            + self.kernel_weight * kernel
+            + self.candidate_structure_weight * structure
+            + self.pairwise_weight * pairwise
         )
         # components 用于日志统计；detach 后避免日志路径保留计算图。
         components = {
@@ -147,5 +223,8 @@ class CUTFGWDDistillation(nn.Module):
             "relation": relation.detach(),
             "diversity": diversity.detach(),
             "embed": embed.detach(),
+            "kernel": kernel.detach(),
+            "structure": structure.detach(),
+            "pairwise": pairwise.detach(),
         }
         return total, components

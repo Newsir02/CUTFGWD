@@ -64,6 +64,7 @@ class HybridTeacher(nn.Module):
             "relation_ages",
             "relation_mask",
             "relation_mass",
+            "relation_event_ids",
         ):
             if key in relation:
                 output[key] = relation[key]

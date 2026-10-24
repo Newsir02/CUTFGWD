@@ -71,6 +71,9 @@ def test_pyg_tgn_and_lightst_backpropagate_through_cutfgw() -> None:
         "relation",
         "diversity",
         "embed",
+        "kernel",
+        "structure",
+        "pairwise",
     }
 
 
