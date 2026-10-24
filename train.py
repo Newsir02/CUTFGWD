@@ -248,6 +248,15 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="成对偏好目标的温度。",
     )
     parser.add_argument(
+        "--relation-content-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "共享 newest-K 支撑上的关系 token 内容蒸馏权重"
+            "（按事件顺序精确对应，无需 OT/age 匹配）。"
+        ),
+    )
+    parser.add_argument(
         "--method",
         choices=("baseline", "anchor_ot", "trid"),
         default="baseline",
@@ -362,6 +371,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("pairwise-weight must be non-negative.")
     if float(getattr(args, "pairwise_temperature", 1.0)) <= 0.0:
         raise ValueError("pairwise-temperature must be positive.")
+    if float(getattr(args, "relation_content_weight", 0.0)) < 0.0:
+        raise ValueError("relation-content-weight must be non-negative.")
     if args.teacher_hidden % 2 != 0:
         raise ValueError("teacher-hidden must be even for TransformerConv heads.")
 
@@ -1071,6 +1082,7 @@ def train_student_epoch(
         objective.relation_weight != 0.0
         or objective.anchor_weight != 0.0
         or getattr(objective, "kernel_weight", 0.0) != 0.0
+        or getattr(objective, "relation_content_weight", 0.0) != 0.0
         or getattr(objective, "embed_weight", 0.0) != 0.0
         or drift_weight != 0.0
     )
@@ -1078,6 +1090,7 @@ def train_student_epoch(
         objective.relation_weight != 0.0
         or objective.diversity_weight != 0.0
         or objective.anchor_weight != 0.0
+        or getattr(objective, "relation_content_weight", 0.0) != 0.0
     )
     # 有状态学生（轻量 GNN）需要按 TGN 顺序先打分后写入正边。
     update_student_state = getattr(student, "update_state", None)
@@ -1165,6 +1178,7 @@ def distill_student(
         candidate_structure_divergence=str(args.candidate_structure_divergence),
         pairwise_weight=float(args.pairwise_weight),
         pairwise_temperature=float(args.pairwise_temperature),
+        relation_content_weight=float(args.relation_content_weight),
         logit_temperature=args.logit_temperature,
         rank_temperature=args.rank_temperature,
         fused_alpha=args.fused_alpha,
@@ -1244,6 +1258,7 @@ def distill_student(
             f"structure={losses.get('structure', 0.0):.4f} "
             f"drift={losses.get('drift', 0.0):.4f} "
             f"pairwise={losses.get('pairwise', 0.0):.4f} "
+            f"content={losses.get('content', 0.0):.4f} "
             f"val_{prefix}_{metric_name}={metric_value:.4f}"
         )
         improved, should_stop = stopper.update(metric_value, epoch)

@@ -8,6 +8,7 @@ from .kd import (
     pairwise_relation_kd_loss,
     rank_wasserstein_loss,
     relation_alignment_loss,
+    support_exact_relation_content_loss,
     temporal_kernel_distillation_loss,
     temporal_relational_drift_loss,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "pairwise_relation_kd_loss",
     "rank_wasserstein_loss",
     "relation_alignment_loss",
+    "support_exact_relation_content_loss",
     "temporal_kernel_distillation_loss",
     "temporal_relational_drift_loss",
 ]

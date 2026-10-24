@@ -74,6 +74,7 @@ def test_pyg_tgn_and_lightst_backpropagate_through_cutfgw() -> None:
         "kernel",
         "structure",
         "pairwise",
+        "content",
     }
 
 

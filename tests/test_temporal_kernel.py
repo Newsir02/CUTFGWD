@@ -7,6 +7,7 @@ from loss import (
     CUTFGWDDistillation,
     candidate_relation_structure_loss,
     pairwise_relation_kd_loss,
+    support_exact_relation_content_loss,
     temporal_kernel_distillation_loss,
     temporal_relational_drift_loss,
 )
@@ -85,6 +86,21 @@ def test_candidate_structure_loss_is_zero_for_matching_geometry() -> None:
         )
         > 0.0
     )
+
+
+def test_support_exact_relation_content_loss() -> None:
+    student = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]])
+    teacher = student.clone()
+    mask = torch.ones(1, 3, dtype=torch.bool)
+    matched = support_exact_relation_content_loss(student, teacher, mask)
+    assert torch.isclose(matched, torch.tensor(0.0), atol=1.0e-6)
+    changed = teacher.clone()
+    changed[0, 2] = torch.tensor([-1.0, 0.0])
+    assert float(support_exact_relation_content_loss(student, changed, mask)) > 0.0
+    # Rows with fewer valid teacher slots than student slots are skipped.
+    short_mask = torch.tensor([[True, True, False]])
+    skipped = support_exact_relation_content_loss(student, changed, short_mask)
+    assert torch.isclose(skipped, torch.tensor(0.0))
 
 
 def test_pairwise_relation_kd_prefers_matching_preferences() -> None:

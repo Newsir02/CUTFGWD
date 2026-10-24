@@ -14,6 +14,7 @@ from .kd import (
     rank_wasserstein_loss,
     relation_alignment_loss,
     relation_slot_diversity_loss,
+    support_exact_relation_content_loss,
     temporal_kernel_distillation_loss,
 )
 
@@ -37,6 +38,7 @@ class CUTFGWDDistillation(nn.Module):
         candidate_structure_divergence: str = "kl",
         pairwise_weight: float = 0.0,
         pairwise_temperature: float = 1.0,
+        relation_content_weight: float = 0.0,
         logit_temperature: float = 2.0,
         rank_temperature: float = 1.0,
         **cutfgw_kwargs: float,
@@ -56,6 +58,7 @@ class CUTFGWDDistillation(nn.Module):
         self.candidate_structure_divergence = candidate_structure_divergence
         self.pairwise_weight = pairwise_weight
         self.pairwise_temperature = pairwise_temperature
+        self.relation_content_weight = relation_content_weight
         self.logit_temperature = logit_temperature
         self.rank_temperature = rank_temperature
         self.relation_loss = CausalUnbalancedTemporalFGW(**cutfgw_kwargs)
@@ -168,6 +171,16 @@ class CUTFGWDDistillation(nn.Module):
         else:
             kernel = zero
 
+        # Support-exact relation content：在共享的最新中国事件支撑上按事件顺序对齐关系 token 内容。
+        if self.relation_content_weight != 0.0:
+            content = support_exact_relation_content_loss(
+                student_output["relation_tokens"],
+                teacher_output["relation_tokens"],
+                teacher_output["relation_mask"],
+            )
+        else:
+            content = zero
+
         # Pairwise relational KD：对齐候选之间的成对偏好关系。
         if self.pairwise_weight != 0.0:
             pairwise = pairwise_relation_kd_loss(
@@ -212,6 +225,7 @@ class CUTFGWDDistillation(nn.Module):
             + self.kernel_weight * kernel
             + self.candidate_structure_weight * structure
             + self.pairwise_weight * pairwise
+            + self.relation_content_weight * content
         )
         # components 用于日志统计；detach 后避免日志路径保留计算图。
         components = {
@@ -226,5 +240,6 @@ class CUTFGWDDistillation(nn.Module):
             "kernel": kernel.detach(),
             "structure": structure.detach(),
             "pairwise": pairwise.detach(),
+            "content": content.detach(),
         }
         return total, components

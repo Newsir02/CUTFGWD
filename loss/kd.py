@@ -304,6 +304,52 @@ def temporal_relational_drift_loss(
     return loss
 
 
+def support_exact_relation_content_loss(
+    student_tokens: Tensor,
+    teacher_tokens: Tensor,
+    teacher_mask: Tensor,
+) -> Tensor:
+    """Align relation-token *content* on the shared newest-K event support.
+
+    Teacher relation slots are ordered oldest -> newest and may contain more
+    events than the student.  Because both observe the same stream, the newest
+    ``R`` teacher tokens correspond exactly (by event order) to the ``R``
+    student slots; no OT or age matching is needed.  Rows with fewer than R
+    valid teacher tokens are skipped.
+    """
+
+    teacher_mask = teacher_mask.bool()
+    if student_tokens.size(1) == 0 or teacher_tokens.size(1) == 0:
+        return student_tokens.sum() * 0.0
+    slots = int(student_tokens.size(1))
+    if teacher_tokens.size(1) < slots:
+        return student_tokens.sum() * 0.0
+    available = teacher_mask.sum(dim=-1)
+    valid_rows = available >= slots
+    if not bool(valid_rows.any()):
+        return student_tokens.sum() * 0.0
+    index = (
+        available[valid_rows].unsqueeze(-1)
+        - slots
+        + torch.arange(slots, device=teacher_tokens.device).unsqueeze(0)
+    )
+    target = torch.gather(
+        teacher_tokens[valid_rows],
+        1,
+        index.unsqueeze(-1).expand(-1, -1, teacher_tokens.size(-1)),
+    ).detach()
+    student = student_tokens[valid_rows]
+    if student.size(-1) != target.size(-1):
+        raise ValueError(
+            "relation content distillation requires equal relation dims: "
+            f"{student.size(-1)} vs {target.size(-1)}."
+        )
+    cosine = 1.0 - F.cosine_similarity(student, target, dim=-1, eps=1.0e-8)
+    # Cosine only: the absolute token scale differs across teacher/student
+    # parameterizations; an unweighted MSE term would dominate the CE loss.
+    return cosine.mean()
+
+
 def pairwise_relation_kd_loss(
     student_logits: Tensor,
     teacher_logits: Tensor,
