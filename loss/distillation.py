@@ -9,6 +9,7 @@ from .cutfgw import CausalUnbalancedTemporalFGW
 from .kd import (
     anchor_relation_loss,
     candidate_relation_structure_loss,
+    hard_negative_margin_loss,
     logit_kd_loss,
     pairwise_relation_kd_loss,
     rank_wasserstein_loss,
@@ -39,6 +40,9 @@ class CUTFGWDDistillation(nn.Module):
         pairwise_weight: float = 0.0,
         pairwise_temperature: float = 1.0,
         relation_content_weight: float = 0.0,
+        margin_weight: float = 0.0,
+        margin_loss_type: str = "smooth_l1",
+        margin_pair: str = "teacher",
         logit_temperature: float = 2.0,
         rank_temperature: float = 1.0,
         **cutfgw_kwargs: float,
@@ -59,6 +63,9 @@ class CUTFGWDDistillation(nn.Module):
         self.pairwise_weight = pairwise_weight
         self.pairwise_temperature = pairwise_temperature
         self.relation_content_weight = relation_content_weight
+        self.margin_weight = margin_weight
+        self.margin_loss_type = margin_loss_type
+        self.margin_pair = margin_pair
         self.logit_temperature = logit_temperature
         self.rank_temperature = rank_temperature
         self.relation_loss = CausalUnbalancedTemporalFGW(**cutfgw_kwargs)
@@ -83,6 +90,18 @@ class CUTFGWDDistillation(nn.Module):
             )
         else:
             logit = zero
+
+        # Hard-negative margin：对齐正样本与最难负样本之间的相对关系。
+        if self.margin_weight != 0.0:
+            margin = hard_negative_margin_loss(
+                student_output["logits"],
+                teacher_output["logits"],
+                target,
+                self.margin_loss_type,
+                self.margin_pair,
+            )
+        else:
+            margin = zero
 
         # TARD 的候选排序关系：对齐 teacher 的排序结构。
         if self.rank_weight != 0.0:
@@ -226,6 +245,7 @@ class CUTFGWDDistillation(nn.Module):
             + self.candidate_structure_weight * structure
             + self.pairwise_weight * pairwise
             + self.relation_content_weight * content
+            + self.margin_weight * margin
         )
         # components 用于日志统计；detach 后避免日志路径保留计算图。
         components = {
@@ -241,5 +261,6 @@ class CUTFGWDDistillation(nn.Module):
             "structure": structure.detach(),
             "pairwise": pairwise.detach(),
             "content": content.detach(),
+            "margin": margin.detach(),
         }
         return total, components

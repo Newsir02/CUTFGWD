@@ -6,6 +6,7 @@ from dataset import CandidateBatchLoader, build_synthetic_temporal_graph
 from loss import (
     CUTFGWDDistillation,
     candidate_relation_structure_loss,
+    hard_negative_margin_loss,
     pairwise_relation_kd_loss,
     support_exact_relation_content_loss,
     temporal_kernel_distillation_loss,
@@ -86,6 +87,20 @@ def test_candidate_structure_loss_is_zero_for_matching_geometry() -> None:
         )
         > 0.0
     )
+
+
+def test_hard_negative_margin_loss() -> None:
+    student = torch.tensor([[2.0, 1.0, 0.0]])
+    teacher = torch.tensor([[3.0, 1.5, 0.0]])
+    target = torch.tensor([0])
+    matched = hard_negative_margin_loss(student, student, target)
+    assert torch.isclose(matched, torch.tensor(0.0), atol=1.0e-6)
+    shifted = hard_negative_margin_loss(student, teacher, target)
+    assert float(shifted) > 0.0
+    # Positive is the argmax for both; hard negative changes with the logits.
+    student2 = torch.tensor([[0.0, 4.0, 3.0]])
+    teacher2 = torch.tensor([[0.0, 5.0, 3.5]])
+    assert float(hard_negative_margin_loss(student2, teacher2, target)) > 0.0
 
 
 def test_support_exact_relation_content_loss() -> None:

@@ -257,6 +257,23 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--margin-weight",
+        type=float,
+        default=0.0,
+        help="正样本 vs 最难负样本 margin 蒸馏权重。",
+    )
+    parser.add_argument(
+        "--margin-loss",
+        choices=("smooth_l1", "l2"),
+        default="smooth_l1",
+    )
+    parser.add_argument(
+        "--margin-pair",
+        choices=("teacher", "student"),
+        default="teacher",
+        help="margin 使用的 hard negative：teacher=固定教师最难负样本（同一对）。",
+    )
+    parser.add_argument(
         "--method",
         choices=("baseline", "anchor_ot", "trid"),
         default="baseline",
@@ -373,6 +390,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("pairwise-temperature must be positive.")
     if float(getattr(args, "relation_content_weight", 0.0)) < 0.0:
         raise ValueError("relation-content-weight must be non-negative.")
+    if float(getattr(args, "margin_weight", 0.0)) < 0.0:
+        raise ValueError("margin-weight must be non-negative.")
     if args.teacher_hidden % 2 != 0:
         raise ValueError("teacher-hidden must be even for TransformerConv heads.")
 
@@ -1179,6 +1198,9 @@ def distill_student(
         pairwise_weight=float(args.pairwise_weight),
         pairwise_temperature=float(args.pairwise_temperature),
         relation_content_weight=float(args.relation_content_weight),
+        margin_weight=float(args.margin_weight),
+        margin_loss_type=str(args.margin_loss),
+        margin_pair=str(args.margin_pair),
         logit_temperature=args.logit_temperature,
         rank_temperature=args.rank_temperature,
         fused_alpha=args.fused_alpha,
@@ -1259,6 +1281,7 @@ def distill_student(
             f"drift={losses.get('drift', 0.0):.4f} "
             f"pairwise={losses.get('pairwise', 0.0):.4f} "
             f"content={losses.get('content', 0.0):.4f} "
+            f"margin={losses.get('margin', 0.0):.4f} "
             f"val_{prefix}_{metric_name}={metric_value:.4f}"
         )
         improved, should_stop = stopper.update(metric_value, epoch)

@@ -3,6 +3,7 @@ from .distillation import CUTFGWDDistillation
 from .kd import (
     anchor_relation_loss,
     candidate_relation_structure_loss,
+    hard_negative_margin_loss,
     logit_kd_loss,
     masked_relation_mean,
     pairwise_relation_kd_loss,
@@ -18,6 +19,7 @@ __all__ = [
     "CUTFGWDDistillation",
     "anchor_relation_loss",
     "candidate_relation_structure_loss",
+    "hard_negative_margin_loss",
     "logit_kd_loss",
     "masked_relation_mean",
     "pairwise_relation_kd_loss",

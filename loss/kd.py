@@ -304,6 +304,67 @@ def temporal_relational_drift_loss(
     return loss
 
 
+def hard_negative_margin_loss(
+    student_logits: Tensor,
+    teacher_logits: Tensor,
+    target: Tensor,
+    loss_type: str = "smooth_l1",
+    pair_mode: str = "teacher",
+) -> Tensor:
+    """Distill the positive-vs-hardest-negative margin.
+
+    The official MRR is decided by the positive's relation to the highest
+    scoring negative.  Matching the teacher's *margin on that binding pair*
+    is a local, task-aligned relational target; easy negatives contribute
+    little and are downweighted implicitly.
+
+    ``pair_mode='teacher'`` fixes the negative to the teacher's hardest one,
+    so both margins refer to the same candidate pair; ``'student'`` uses each
+    model's own hardest negative (legacy behaviour).
+    """
+
+    if loss_type not in {"smooth_l1", "l2"}:
+        raise ValueError("margin loss_type must be smooth_l1 or l2.")
+    if pair_mode not in {"teacher", "student"}:
+        raise ValueError("margin pair_mode must be teacher or student.")
+    if student_logits.size(-1) < 2:
+        return student_logits.sum() * 0.0
+    target = target.long()
+    if bool((target < 0).any()) or bool((target >= student_logits.size(-1)).any()):
+        raise ValueError("margin target is out of range.")
+    position = F.one_hot(target, num_classes=student_logits.size(-1)).bool()
+    negative_mask = ~position
+    student_positive = torch.gather(
+        student_logits, 1, target.unsqueeze(-1)
+    ).squeeze(-1)
+    teacher_positive = torch.gather(
+        teacher_logits.detach(), 1, target.unsqueeze(-1)
+    ).squeeze(-1)
+    if pair_mode == "teacher":
+        teacher_masked = teacher_logits.detach().masked_fill(
+            ~negative_mask, -1.0e9
+        )
+        teacher_hard_index = teacher_masked.argmax(dim=-1)
+        student_hard = torch.gather(
+            student_logits, 1, teacher_hard_index.unsqueeze(-1)
+        ).squeeze(-1)
+        teacher_hard = torch.gather(
+            teacher_masked, 1, teacher_hard_index.unsqueeze(-1)
+        ).squeeze(-1)
+    else:
+        student_hard = student_logits.masked_fill(~negative_mask, -1.0e9).amax(
+            dim=-1
+        )
+        teacher_hard = teacher_logits.detach().masked_fill(
+            ~negative_mask, -1.0e9
+        ).amax(dim=-1)
+    student_margin = student_positive - student_hard
+    teacher_margin = teacher_positive - teacher_hard
+    if loss_type == "l2":
+        return (student_margin - teacher_margin).square().mean()
+    return F.smooth_l1_loss(student_margin, teacher_margin)
+
+
 def support_exact_relation_content_loss(
     student_tokens: Tensor,
     teacher_tokens: Tensor,
